@@ -1,0 +1,1177 @@
+// 「猫猫请落座」微信小游戏主逻辑
+// 复用 utils/puzzle.js / rules.js / rank.js / sound.js，UI 全部用 canvas 自绘。
+const Renderer = require('./renderer.js');
+const puzzle = require('../utils/puzzle.js');
+const rules = require('../utils/rules.js');
+const rankService = require('../utils/rank.js');
+const sound = require('../utils/sound.js');
+
+const DW = 750;
+const SAVE_KEY = 'catwhere_save_v2';
+const TOTAL_LEVELS = 60;
+const PALETTE = ['#f4756b', '#6fd8c6', '#f78fb3', '#c9a7f5', '#ffd166', '#7fb3f5', '#f5a35c', '#9fd977'];
+const SYMBOLS = ['●', '▲', '■', '★', '◆', '♥', '✚', '♠'];
+const MAX_HEARTS = 3;
+const CELL_GAP = 8;
+const MAX_HISTORY = 60;
+
+// 颜色主题（对应原 wxss）
+const C = {
+  pageBg: '#f5f7fa',
+  card: '#ffffff',
+  text: '#3d4667',
+  subText: '#8a94b3',
+  lightBg: '#eef2f7',
+  border: '#dde4ee',
+  coral: '#f4756b',
+  green: '#6fd8c6',
+  greenDeep: '#2f8c78',
+  purple: '#c9a7f5',
+  orange: '#ff8a3d',
+  mask: 'rgba(61,70,103,0.5)',
+  toolActive: '#bfe8dc',
+};
+
+function formatTime(sec) {
+  const s = Math.max(0, Math.floor(sec) || 0);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return (m < 10 ? '0' + m : m) + ':' + (r < 10 ? '0' + r : r);
+}
+
+class Game {
+  constructor(canvas) {
+    this.r = new Renderer(canvas, DW);
+    let info = { windowWidth: 375, windowHeight: 667, pixelRatio: 1 };
+    try { info = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync(); } catch (e) {}
+    this.r.resize(info);
+
+    // 顶部安全区（避开刘海/灵动岛），换算为逻辑坐标
+    let safeTopPx = 0;
+    try {
+      if (info.safeArea && typeof info.safeArea.top === 'number') {
+        safeTopPx = info.safeArea.top;
+      }
+    } catch (e) {}
+    this.topInset = Math.max(0, Math.round(safeTopPx / this.r.scale));
+
+    // 状态（对应原 Page.data 与实例属性）
+    let save = {};
+    try { save = wx.getStorageSync(SAVE_KEY) || {}; } catch (e) {}
+    this.bestTimes = save.bestTimes || {};
+    this.bestTotal = save.bestTotal || 0; // 历史最佳总通关用时
+    this.maxLevel = Math.max(save.maxLevel || 1, 1);
+    this.nickname = save.nickname || ('喵友' + String(1000 + Math.floor(Math.random() * 9000)));
+    this.colorblind = !!save.colorblind;
+    this.soundOn = save.sound !== false;
+    sound.setEnabled(this.soundOn);
+
+    this.level = 1;
+    this.size = 4;
+    this.cells = [];
+    this.region = [];
+    this.catsPlaced = 0;
+    this.hearts = [1, 1, 1];
+    this.heartShakeUntil = 0;
+    this.markMode = false;
+    this.hintsLeft = 1;
+    this.history = [];
+    this.seconds = 0;
+    this.timerBase = 0;
+    this.timerStart = 0;
+    this.timer = null;
+    this.won = false;
+    this.isNewBest = false;
+    this.allCleared = false;
+
+    this.overlay = null; // null | 'levels' | 'rank' | 'win' | 'rules' | 'settings' | 'hearts'
+    this.toast = null; // { text, until }
+    this.dialog = null; // 自绘确认弹窗
+    this.settings = null; // 自绘菜单
+
+    this.touchStartPos = null;
+    this.touchStartIdx = -1;
+    this.suppressTap = false; // 拖动/长按已触发时抑制随后的 tap
+    this.listScroll = { levels: 0, rank: 0 };
+
+    this.rankReady = false;
+    this.myRankText = '';
+    this.rankList = [];
+    this.meInfo = null;
+    this.rankFixTried = false; // 旧记录补报总用时的重试保护
+
+    // 微信好友排行榜（开放数据域）
+    this.openDataContext = null;
+    this.sharedCanvas = null;
+    this.friendRankActive = false;
+    try {
+      if (typeof wx.getOpenDataContext === 'function') {
+        this.openDataContext = wx.getOpenDataContext();
+        this.sharedCanvas = this.openDataContext && this.openDataContext.canvas;
+      }
+    } catch (e) { /* 不支持开放数据域时降级 */ }
+
+    // 布局缓存
+    this.layout = null;
+    this.boardHit = []; // 每格命中矩形，长按检测用
+
+    this.loadLevel(Math.min(Math.max(save.level || 1, 1), this.maxLevel));
+    this.bindInput();
+    this.setupShare();
+    this.refreshRank();
+    this.loop();
+  }
+
+  // 配置分享：注册被动转发（右上角 ··· → 转发），开发版也能用
+  setupShare() {
+    try {
+      if (typeof wx.showShareMenu === 'function') {
+        wx.showShareMenu({ withShareTicket: true });
+      }
+      if (typeof wx.onShareAppMessage === 'function') {
+        const self = this;
+        wx.onShareAppMessage(function () {
+          return {
+            title: '猫猫请落座 · 我玩到第' + self.level + '关了，来挑战！',
+            query: 'from=invite&level=' + self.level,
+            imageUrl: '',
+          };
+        });
+      }
+    } catch (e) { /* 分享能力不可用时静默降级 */ }
+  }
+
+  /* ---------------- 存档与关卡 ---------------- */
+  persist(nextLevel) {
+    try {
+      wx.setStorageSync(SAVE_KEY, {
+        level: nextLevel || this.level,
+        maxLevel: this.maxLevel,
+        bestTimes: this.bestTimes,
+        bestTotal: this.bestTotal,
+        colorblind: this.colorblind,
+        nickname: this.nickname,
+        sound: this.soundOn,
+      });
+    } catch (e) {}
+  }
+
+  levelSize(level) { return Math.min(4 + Math.floor((level - 1) / 3), 8); }
+  hintQuota(level) { return Math.min(1 + Math.floor((level - 1) / 6), 2); }
+
+  loadLevel(level) {
+    const size = this.levelSize(level);
+    const rand = puzzle.rng(level * 1013904223 + 12345);
+    const gen = puzzle.generate(size, rand);
+    const colorOf = puzzle.assignColors(gen.region, size, PALETTE);
+    const symbols = puzzle.shuffle(SYMBOLS.slice(), rand);
+
+    const cells = [];
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        const idx = r * size + c;
+        const reg = gen.region[idx];
+        cells.push({
+          idx, row: r, col: c, region: reg,
+          color: PALETTE[colorOf[reg]], symbol: symbols[reg],
+          state: 'empty', auto: false,
+        });
+      }
+    }
+    this.region = gen.region;
+    this.cells = cells;
+    this.level = level;
+    this.size = size;
+    this.maxLevel = Math.max(this.maxLevel || 1, level);
+    this.catsPlaced = 0;
+    this.hearts = new Array(MAX_HEARTS).fill(1);
+    this.markMode = false;
+    this.hintsLeft = this.hintQuota(level);
+    this.history = [];
+    this.won = false;
+    this.isNewBest = false;
+    this.allCleared = level >= TOTAL_LEVELS;
+    this.overlay = null;
+    this.listScroll.levels = 0;
+    this.seconds = 0; // 每关计时从零开始（关键：不能延续上一关）
+    this.stopTimer();
+    this.persist(level);
+    this.startTimer();
+  }
+
+  /* ---------------- 计时 ---------------- */
+  startTimer() {
+    this.stopTimer();
+    this.timerBase = this.seconds;
+    this.timerStart = Date.now();
+    const self = this;
+    this.timer = setInterval(function () {
+      if (self.won || self.overlay) return;
+      self.seconds = self.timerBase + Math.floor((Date.now() - self.timerStart) / 1000);
+    }, 300);
+  }
+  stopTimer() {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  }
+  pauseTimer() {
+    if (!this.timer) return;
+    this.seconds = this.timerBase + Math.floor((Date.now() - this.timerStart) / 1000);
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+  resumeTimer() {
+    if (this.won || this.timer) return;
+    this.startTimer();
+  }
+
+  /* ---------------- 排行榜 ---------------- */
+  refreshRank() {
+    const self = this;
+    rankService.fetchRanking().then(function (res) {
+      self.rankReady = true;
+      self.meInfo = res.me || null;
+      self.myRankText = res.me ? ('第' + res.me.rank + '名') : '未上榜';
+      self.rankList = (res.top || []).map(function (r) {
+        return {
+          rank: r.rank, nickname: r.nickname, maxLevel: r.maxLevel,
+          totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: !!r.isMe,
+        };
+      });
+      // 兼容旧记录：我的成绩有本关用时但缺总用时，用本地数据补报一次（只尝试一次，避免死循环）
+      if (res.me && res.me.time > 0 && (!res.me.total || res.me.total <= 0) && !self.rankFixTried) {
+        self.rankFixTried = true;
+        const localTotal = self.totalTime();
+        if (localTotal > 0) {
+          rankService.submitScore(self.maxLevel, localTotal, res.me.time, self.nickname)
+            .then(function () { self.refreshRank(); })
+            .catch(function () {});
+        }
+      }
+    }).catch(function () {
+      self.rankReady = false;
+    });
+  }
+  // 总通关时间：所有已通关关卡最佳用时之和
+  totalTime() {
+    let sum = 0;
+    for (const k in this.bestTimes) {
+      sum += this.bestTimes[k] || 0;
+    }
+    return Math.floor(sum);
+  }
+
+  submitScore(level, total, single) {
+    rankService.submitScore(level, total, single, this.nickname).then(() => this.refreshRank()).catch(() => {});
+  }
+
+  /* ---------------- 游戏操作（复用原逻辑） ---------------- */
+  pushHistory() {
+    this.history.push({
+      states: this.cells.map(function (c) { return c.state; }),
+      autos: this.cells.map(function (c) { return !!c.auto; }),
+      catsPlaced: this.catsPlaced,
+      hintsLeft: this.hintsLeft,
+    });
+    if (this.history.length > MAX_HISTORY) this.history.shift();
+  }
+
+  currentCats() {
+    const out = [];
+    for (let i = 0; i < this.cells.length; i++) {
+      const c = this.cells[i];
+      if (c.state === 'cat') out.push({ row: c.row, col: c.col, region: c.region });
+    }
+    return out;
+  }
+
+  vibrate() { try { wx.vibrateShort({ type: 'light' }); } catch (e) {} }
+  showToast(text, dur) { this.toast = { text, until: Date.now() + (dur || 1600) }; }
+
+  onCellTap(idx) {
+    if (this.won || this.overlay || this.dialog) return;
+    if (this.suppressTap) { this.suppressTap = false; return; }
+    const cell = this.cells[idx];
+    if (!cell) return;
+
+    if (this.markMode) { this.toggleBan(idx); return; }
+    if (cell.state === 'cat') {
+      this.pushHistory();
+      cell.state = 'empty'; cell.auto = false;
+      sound.play('tap');
+      this.catsPlaced--;
+      return;
+    }
+    if (cell.state === 'ban') {
+      this.pushHistory();
+      cell.state = 'empty'; cell.auto = false;
+      sound.play('tap');
+      return;
+    }
+    this.tryPlaceCat(idx);
+  }
+
+  toggleBan(idx) {
+    const cell = this.cells[idx];
+    if (!cell) return;
+    this.pushHistory();
+    if (cell.state === 'ban') {
+      cell.state = 'empty'; cell.auto = false;
+    } else {
+      if (cell.state === 'cat') this.catsPlaced -= 1;
+      cell.state = 'ban'; cell.auto = false;
+    }
+    sound.play('tap');
+    this.vibrate();
+  }
+
+  tryPlaceCat(idx) {
+    const target = this.cells[idx];
+    const reason = rules.conflictReason(this.currentCats(), target);
+    if (reason) { this.penalize(target, reason); return; }
+    this.pushHistory();
+    target.state = 'cat';
+    sound.play('place');
+    this.catsPlaced += 1;
+    if (this.catsPlaced === this.size) this.finishLevel();
+  }
+
+  penalize(target, reason) {
+    this.pushHistory();
+    for (let i = this.hearts.length - 1; i >= 0; i--) {
+      if (this.hearts[i]) { this.hearts[i] = 0; break; }
+    }
+    target.state = 'ban';
+    target.auto = true;
+    sound.play('error');
+    this.heartShakeUntil = Date.now() + 450;
+    this.showToast(reason, 1600);
+    const alive = this.hearts.some(function (v) { return v; });
+    if (!alive) {
+      const self = this;
+      const level = this.level;
+      setTimeout(function () {
+        if (!self.won) self.dialog = {
+          title: '喵呜～',
+          content: '爱心用完了，这一关重新来过吧！',
+          confirm: '重试本关', showCancel: false,
+          onConfirm: function () { self.loadLevel(level); },
+        };
+      }, 400);
+    }
+  }
+
+  finishLevel() {
+    this.stopTimer();
+    const level = this.level;
+    const used = this.seconds;
+    const prev = this.bestTimes[level];
+    const isNewBest = !prev || used < prev;
+    if (isNewBest) this.bestTimes[level] = used;
+    if (level + 1 > this.maxLevel) this.maxLevel = Math.min(level + 1, TOTAL_LEVELS);
+    this.won = true;
+    this.isNewBest = isNewBest;
+    this.allCleared = level >= TOTAL_LEVELS;
+    sound.play('win');
+    this.vibrate();
+    this.overlay = 'win';
+    const total = this.totalTime();
+    // 更新历史最佳总用时（总用时越小越好）
+    if (!this.bestTotal || total < this.bestTotal) this.bestTotal = total;
+    this.persist(Math.min(level + 1, this.maxLevel));
+    // 结算页 4 项数据：本关用时、总通关用时、最佳本关、最佳总通关
+    this.winStats = {
+      single: used,
+      total: total,
+      bestSingle: this.bestTimes[level],
+      bestTotal: this.bestTotal,
+    };
+    this.submitScore(level, total, used);
+    this.reportFriendScore(level, total, used);
+  }
+
+  // 上报成绩到微信托管数据，供开放数据域好友榜读取（真实微信昵称/头像由微信提供）
+  reportFriendScore(level, total, seconds) {
+    if (!this.openDataContext) return;
+    try {
+      if (typeof wx.setUserCloudStorage !== 'function') return;
+      const bestLevel = Math.max(level, 1);
+      // value 必须是字符串；存关数、总通关时间、单关时间
+      const value = JSON.stringify({
+        level: bestLevel,
+        total: Math.max(0, Math.floor(total)),
+        time: Math.max(0, Math.floor(seconds)),
+      });
+      wx.setUserCloudStorage({
+        KVDataList: [{ key: 'cat_rank_v1', value: value }],
+        success: function () {},
+        fail: function (e) { console.warn('[好友榜] 成绩上报失败:', e && e.errMsg || e); },
+      });
+    } catch (e) { console.warn('[好友榜] 成绩上报异常:', e); }
+  }
+
+  onUndo() {
+    if (this.won || this.overlay) return;
+    if (!this.history.length) { this.showToast('没有可以撤销的步骤'); return; }
+    const snap = this.history.pop();
+    for (let i = 0; i < this.cells.length; i++) {
+      this.cells[i].state = snap.states[i];
+      this.cells[i].auto = !!snap.autos[i];
+    }
+    this.catsPlaced = snap.catsPlaced;
+    this.hintsLeft = Math.min(snap.hintsLeft, this.hintsLeft);
+  }
+
+  onHint() {
+    if (this.won || this.overlay) return;
+    if (this.hintsLeft <= 0) { this.showToast('本关提示已用完'); return; }
+    const cats = this.currentCats();
+    const hint = puzzle.nextHint(this.size, this.region, cats);
+    if (!hint) { this.showToast('当前摆法走不通，先撤掉几只小猫吧', 2000); return; }
+    const idx = hint.row * this.size + hint.col;
+    this.pushHistory();
+    this.cells[idx].state = 'cat';
+    sound.play('hint');
+    this.catsPlaced += 1;
+    this.hintsLeft -= 1;
+    this.vibrate();
+    if (this.catsPlaced === this.size) this.finishLevel();
+  }
+
+  onClear() {
+    if (this.won || this.overlay) return;
+    let hasAny = false;
+    for (let i = 0; i < this.cells.length; i++) {
+      if (this.cells[i].state !== 'empty') { hasAny = true; break; }
+    }
+    if (!hasAny) return;
+    this.pushHistory();
+    for (let i = 0; i < this.cells.length; i++) this.cells[i].state = 'empty';
+    this.catsPlaced = 0;
+  }
+
+  // 拖拽批量标记：一次拖拽算一步历史，可一次撤销
+  beginDragMark(idx) {
+    const cell = this.cells[idx];
+    if (!cell) return false;
+    const target = (cell.state === 'ban') ? 'empty' : 'ban';
+    this.pushHistory();
+    this.dragMark = { target: target, visited: {}, soundPlayed: false };
+    this.applyDragMark(idx);
+    return true;
+  }
+
+  // 对划过的格子施加与起始格相同的标记（ban 或 清除）
+  applyDragMark(idx) {
+    const d = this.dragMark;
+    if (!d || d.visited[idx]) return;
+    const cell = this.cells[idx];
+    if (!cell) return;
+    d.visited[idx] = true;
+    if (d.target === 'ban') {
+      if (cell.state === 'cat') this.catsPlaced -= 1;
+      cell.state = 'ban';
+      cell.auto = false;
+    } else {
+      if (cell.state !== 'ban') return;
+      cell.state = 'empty';
+      cell.auto = false;
+    }
+    if (!d.soundPlayed) { sound.play('tap'); d.soundPlayed = true; }
+  }
+
+  onNextLevel() {
+    if (this.level >= TOTAL_LEVELS) { this.showToast('已经是最后一关啦'); return; }
+    this.loadLevel(this.level + 1);
+  }
+
+  // 邀请好友：优先主动拉起转发；开发版受限时引导用户点右上角 ···
+  inviteFriend() {
+    try {
+      if (typeof wx.shareAppMessage === 'function') {
+        wx.shareAppMessage({
+          title: '猫猫请落座 · 我玩到第' + this.level + '关了，来挑战！',
+          query: 'from=invite&level=' + this.level,
+          imageUrl: '',
+        });
+        // 主动转发在开发/体验版常被微信限制；提示兜底路径
+        this.showToast('若没弹出，请点右上角 ··· 转发', 2200);
+      } else {
+        this.showToast('点击右上角 ··· 转发给好友', 2200);
+      }
+    } catch (e) {
+      this.showToast('点击右上角 ··· 转发给好友', 2200);
+    }
+  }
+
+  /* ---------------- 输入 ---------------- */
+  bindInput() {
+    const self = this;
+    const DRAG_THRESHOLD = 12; // 逻辑像素：手指移动超过此距离即视为拖动标记
+    const cellAt = function (clientX, clientY) {
+      const a = self.r.hitTest(clientX / self.r.scale, clientY / self.r.scale);
+      return a && a.data && a.data.longPress ? a.data.idx : -1;
+    };
+
+    wx.onTouchStart(function (e) {
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      self.touchStartPos = { x: t.clientX, y: t.clientY };
+      self.touchStartIdx = cellAt(t.clientX, t.clientY);
+      self.suppressTap = false;
+      self.dragMark = null;
+      // 标记模式下按下即标记，便于逐格点选；普通模式等拖动超过阈值再标记
+      if (self.markMode && self.touchStartIdx >= 0 && !self.won && !self.overlay && !self.dialog) {
+        self.beginDragMark(self.touchStartIdx);
+        self.suppressTap = true;
+      }
+    });
+
+    wx.onTouchMove(function (e) {
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      if (self.dragMark) {
+        const idx = cellAt(t.clientX, t.clientY);
+        if (idx >= 0) self.applyDragMark(idx);
+        return;
+      }
+      // 普通模式：直接拖动即批量标记，无需先点「标记」按钮
+      if (!self.touchStartPos || self.touchStartIdx < 0 || self.won || self.overlay || self.dialog) return;
+      const dx = Math.abs(t.clientX - self.touchStartPos.x) / self.r.scale;
+      const dy = Math.abs(t.clientY - self.touchStartPos.y) / self.r.scale;
+      if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) return;
+      if (self.beginDragMark(self.touchStartIdx)) {
+        const idx = cellAt(t.clientX, t.clientY);
+        if (idx >= 0) self.applyDragMark(idx);
+        self.suppressTap = true;
+      }
+    });
+
+    wx.onTouchEnd(function (e) {
+      const t = e.changedTouches && e.changedTouches[0];
+      if (!t) return;
+      const lx = t.clientX / self.r.scale;
+      const ly = t.clientY / self.r.scale;
+
+      // 拖拽标记会话：本次手势结束，不执行单格 tap
+      if (self.dragMark) {
+        self.dragMark = null;
+        self.touchStartPos = null;
+        self.touchStartIdx = -1;
+        self.suppressTap = false;
+        return;
+      }
+
+      // 拖动/标记模式单击已触发：本次 touchend 不执行 tap
+      if (self.suppressTap) {
+        self.touchStartPos = null;
+        self.touchStartIdx = -1;
+        self.suppressTap = false;
+        return;
+      }
+
+      // 浮层滚动：拖动列表
+      if (self.touchStartPos) {
+        const dy = (t.clientY - self.touchStartPos.y) / self.r.scale;
+        const dx = (t.clientX - self.touchStartPos.x) / self.r.scale;
+        if (Math.abs(dy) > 12 && (self.overlay === 'levels' || self.overlay === 'rank' || self.overlay === 'friendRank')) {
+          if (self.overlay === 'friendRank') {
+            if (self.openDataContext) {
+              try { self.openDataContext.postMessage({ action: 'scroll', dy: -dy }); } catch (e) {}
+            }
+          } else {
+            const key = self.overlay;
+            const max = self.overlay === 'levels' ? Math.max(0, Math.ceil(TOTAL_LEVELS / 8) * 96 - 780) : Math.max(0, self.rankList.length * 92 - 720);
+            self.listScroll[key] = Math.max(0, Math.min(max, self.listScroll[key] - dy));
+          }
+          self.touchStartPos = null;
+          self.touchStartIdx = -1;
+          return;
+        }
+        if (Math.abs(dx) > 20 || Math.abs(dy) > 20) { self.touchStartPos = null; self.touchStartIdx = -1; return; }
+      }
+      self.touchStartPos = null;
+      self.touchStartIdx = -1;
+
+      const a = self.r.hitTest(lx, ly);
+      if (!a) return;
+      if (a.data && a.data.onTap) { a.data.onTap(); return; }
+      if (a.handler) a.handler(a.data);
+    });
+
+    const onHide = function () { self.pauseTimer(); };
+    const onShow = function () { self.resumeTimer(); };
+    if (wx.onHide) wx.onHide(onHide);
+    if (wx.onShow) wx.onShow(onShow);
+  }
+
+  /* ---------------- 主循环 ---------------- */
+  loop() {
+    const self = this;
+    const raf = (typeof requestAnimationFrame !== 'undefined')
+      ? requestAnimationFrame
+      : ((wx.requestAnimationFrame && wx.requestAnimationFrame.bind(wx)) || function (cb) { setTimeout(cb, 16); });
+    const draw = function () {
+      self.render();
+      raf(draw);
+    };
+    raf(draw);
+  }
+
+  /* ---------------- 布局 ---------------- */
+  computeLayout() {
+    const r = this.r;
+    const W = r.DW;
+    const pad = 30;
+    // 顶部偏移 = 系统安全区（刘海）+ 额外下移（避开真机调试悬浮胶囊）
+    const oy = (this.topInset || 0) + 44;
+    const topBarY = 34 + oy;
+    const heartsY = 116 + oy;
+    const progressY = 196 + oy;
+    const rulesY = 268 + oy;
+    const rulesH = 158;
+
+    const boardMaxW = W - pad * 2;
+    let cellSize = Math.floor((boardMaxW - CELL_GAP * (this.size + 1)) / this.size);
+    cellSize = Math.max(30, Math.min(180, cellSize));
+    const boardInner = cellSize * this.size + CELL_GAP * (this.size + 1);
+    const boardX = (W - boardInner) / 2;
+    const boardY = rulesY + rulesH + 24;
+    const bottomY = boardY + boardInner + 28;
+    const bottomH = 108;
+
+    this.layout = {
+      pad, W, topBarY, heartsY, progressY, rulesY, rulesH,
+      cellSize, boardInner, boardX, boardY, bottomY, bottomH,
+      cellFont: Math.max(16, Math.round(cellSize * 0.58)),
+      cellFontSmall: Math.max(13, Math.round(cellSize * 0.4)),
+      cellFontTiny: Math.max(11, Math.round(cellSize * 0.32)),
+    };
+  }
+
+  /* ---------------- 渲染 ---------------- */
+  render() {
+    const r = this.r;
+    r.begin();
+    r.clear();
+    this.computeLayout();
+    r.setFill(C.pageBg);
+    r.fillRect(0, 0, r.DW, r.DH);
+
+    this.drawTopBar();
+    this.drawHearts();
+    this.drawProgress();
+    this.drawRulesCard();
+    this.drawBoard();
+    this.drawBottomBar();
+
+    if (this.overlay === 'levels') this.drawLevelsPanel();
+    else if (this.overlay === 'rank') this.drawRankPanel();
+    else if (this.overlay === 'friendRank') this.drawFriendRankPanel();
+    else if (this.overlay === 'win') this.drawWinPanel();
+
+    if (this.dialog) this.drawDialog();
+    if (this.settings) this.drawSettings();
+    if (this.toast && Date.now() < this.toast.until) this.drawToast();
+    else this.toast = null;
+  }
+
+  drawTopBar() {
+    const r = this.r, L = this.layout;
+    const cy = L.topBarY + 34;
+    // 设置齿轮
+    r.gear(66, cy, 40, C.text);
+    r.addHit(20, L.topBarY, 92, 68, null, { onTap: () => this.openSettings() });
+    // 关卡标题
+    r.fillRoundRect(L.W / 2 - 110, L.topBarY + 2, 220, 64, 32, C.card);
+    r.text('第' + this.level + '关', L.W / 2, cy, 34, C.text, 'center', 'middle', 'bold');
+    r.addHit(L.W / 2 - 110, L.topBarY, 220, 68, null, { onTap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } });
+    // 菜单
+    r.menu(L.W - 66, cy, 44, C.text);
+    r.addHit(L.W - 112, L.topBarY, 92, 68, null, { onTap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } });
+  }
+
+  drawHearts() {
+    const r = this.r, L = this.layout;
+    const cy = L.heartsY + 30;
+    r.question(66, cy, 46, C.text);
+    r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
+      title: '玩法说明',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。放错会扣一颗爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。',
+      confirm: '知道了', showCancel: false, onConfirm: null,
+    }; } });
+
+    const shaking = Date.now() < this.heartShakeUntil;
+    const startX = L.W / 2 - 110;
+    for (let i = 0; i < this.hearts.length; i++) {
+      let off = 0;
+      if (shaking) off = Math.sin(Date.now() / 25 + i) * 8;
+      const hx = startX + i * 84 + 30 + off;
+      if (this.hearts[i]) r.heart(hx, cy, 52, C.coral, true);
+      else { r.heart(hx, cy, 52, C.border, false); }
+    }
+  }
+
+  drawProgress() {
+    const r = this.r, L = this.layout;
+    const y = L.progressY;
+    const h = 60;
+    const gap = 16;
+    const pills = [
+      { icon: 'cat', text: this.catsPlaced + ' / ' + this.size },
+      { icon: 'clock', text: formatTime(this.seconds) },
+    ];
+    if (this.rankReady) pills.push({ icon: 'trophy', text: this.myRankText, tap: () => { this.overlay = 'rank'; this.refreshRank(); } });
+
+    const pw = (L.W - L.pad * 2 - gap * (pills.length - 1)) / pills.length;
+    for (let i = 0; i < pills.length; i++) {
+      const x = L.pad + i * (pw + gap);
+      r.fillRoundRect(x, y, pw, h, 30, C.card);
+      const cy = y + h / 2;
+      const iconW = 48;
+      const ix = x + 34;
+      if (pills[i].icon === 'cat') r.cat(ix, cy, 34, C.coral);
+      else if (pills[i].icon === 'clock') r.clock(ix, cy, 34, C.text);
+      else if (pills[i].icon === 'trophy') r.trophy(ix, cy, 34, C.orange);
+      r.text(pills[i].text, x + iconW + 8, cy, 26, C.text, 'left', 'middle', 'bold');
+      if (pills[i].tap) r.addHit(x, y, pw, h, null, { onTap: pills[i].tap });
+    }
+  }
+
+  drawRulesCard() {
+    const r = this.r, L = this.layout;
+    const y = L.rulesY, h = L.rulesH;
+    r.fillRoundRect(L.pad, y, L.W - L.pad * 2, h, 24, C.card);
+    const colW = (L.W - L.pad * 2) / 3;
+    const items = [
+      { sq: [[0, 1, 0], [2, 2, 2]], lines: ['一种颜色', '1只小猫'] },
+      { sq: [[1, 2, 0], [2, 2, 3]], lines: ['每行每列', '各1只小猫'] },
+      { sq: [[1, 2, 0], [2, 3, 2]], lines: ['小猫不能', '相邻'] },
+    ];
+    for (let i = 0; i < items.length; i++) {
+      const cx = L.pad + colW * i + colW / 2;
+      this.drawMiniGrid(cx - 42, y + 22, items[i].sq);
+      r.text(items[i].lines[0], cx, y + 112, 20, C.text, 'center', 'middle');
+      r.text(items[i].lines[1], cx, y + 136, 20, C.text, 'center', 'middle');
+    }
+  }
+
+  drawMiniGrid(gx, gy, map) {
+    const r = this.r;
+    const miniColors = [C.coral, C.green, C.purple, '#ffd166'];
+    const s = 26, g = 4;
+    for (let row = 0; row < map.length; row++) {
+      for (let col = 0; col < map[row].length; col++) {
+        const v = map[row][col];
+        if (v === 2) continue;
+        const x = gx + col * (s + g), y = gy + row * (s + g);
+        r.fillRoundRect(x, y, s, s, 6, miniColors[v] || C.lightBg);
+        if (v === 1 || v === 3) r.cat(x + s / 2, y + s / 2 + 1, 20, '#3d4667');
+      }
+    }
+  }
+
+  // 矢量叉号：手动标记为带阴影白色，自动判错为纯白
+  drawCross(cx, cy, size, color, plain) {
+    const r = this.r, c = r.ctx;
+    const k = size * 0.42;
+    c.save();
+    if (!plain) {
+      c.shadowColor = 'rgba(0,0,0,0.45)';
+      c.shadowBlur = 5;
+    }
+    c.strokeStyle = color;
+    c.lineWidth = Math.max(3, size * 0.14);
+    c.lineCap = 'round';
+    c.beginPath(); c.moveTo(cx - k, cy - k); c.lineTo(cx + k, cy + k); c.stroke();
+    c.beginPath(); c.moveTo(cx + k, cy - k); c.lineTo(cx - k, cy + k); c.stroke();
+    c.restore();
+  }
+
+  drawBoard() {
+    const r = this.r, L = this.layout;
+    const bx = L.boardX, by = L.boardY, cs = L.cellSize, gap = CELL_GAP, n = this.size;
+    r.fillRoundRect(bx - 12, by - 12, L.boardInner + 24, L.boardInner + 24, 20, C.card);
+    this.boardHit = [];
+    for (let i = 0; i < this.cells.length; i++) {
+      const cell = this.cells[i];
+      const x = bx + gap + cell.col * (cs + gap);
+      const y = by + gap + cell.row * (cs + gap);
+      r.fillRoundRect(x, y, cs, cs, 10, cell.color);
+
+      if (cell.state === 'cat') {
+        r.cat(x + cs / 2, y + cs / 2 + 2, cs * 0.72, cell.auto ? C.greenDeep : C.text);
+      } else if (cell.state === 'ban') {
+        this.drawCross(x + cs / 2, y + cs / 2 + 1, L.cellFontSmall, '#ffffff', cell.auto);
+      } else if (this.colorblind) {
+        r.textShadow(cell.symbol, x + cs / 2, y + cs / 2 + 1, L.cellFontTiny, '#ffffff', 'center', 'middle', 'rgba(0,0,0,0.35)', 3);
+      }
+
+      r.addHit(x, y, cs, cs, null, { idx: i, longPress: true, onTap: () => this.onCellTap(i) });
+    }
+  }
+
+  drawBottomBar() {
+    const r = this.r, L = this.layout;
+    const y = L.bottomY, h = L.bottomH;
+    const tools = [
+      { icon: 'trash', label: '清除', tap: () => this.onClear(), muted: false, active: false },
+      { icon: 'undo', label: '撤销', tap: () => this.onUndo(), muted: this.history.length === 0, active: false },
+      { icon: 'cross', label: '标记', tap: () => { if (!this.won) this.markMode = !this.markMode; }, muted: false, active: this.markMode },
+      { icon: 'bulb', label: '提示', tap: () => this.onHint(), muted: this.hintsLeft <= 0, active: false, badge: this.hintsLeft },
+      { icon: 'eye', label: '色盲模式', tap: () => { this.colorblind = !this.colorblind; this.persist(); }, muted: false, active: this.colorblind },
+    ];
+    const tw = (L.W - L.pad * 2 - 12 * 4) / 5;
+    for (let i = 0; i < tools.length; i++) {
+      const x = L.pad + i * (tw + 12);
+      const t = tools[i];
+      r.fillRoundRect(x, y, tw, h, 18, t.active ? C.toolActive : C.card);
+      r.globalAlpha(t.muted ? 0.45 : 1);
+      const ix = x + tw / 2, iy = y + 38;
+      if (t.icon === 'trash') r.trash(ix, iy, 38, C.text);
+      else if (t.icon === 'undo') r.undo(ix, iy, 38, C.text);
+      else if (t.icon === 'cross') this.drawCross(ix, iy, 34, C.text, true);
+      else if (t.icon === 'bulb') r.bulb(ix, iy, 38, C.text);
+      else if (t.icon === 'eye') r.eye(ix, iy, 40, C.text);
+      r.text(t.label, x + tw / 2, y + 82, 19, C.text, 'center', 'middle');
+      r.globalAlpha(1);
+      if (t.badge > 0) {
+        r.fillRoundRect(x + tw - 30, y + 8, 26, 26, 13, C.orange);
+        r.text(String(t.badge), x + tw - 17, y + 21, 16, '#ffffff', 'center', 'middle', 'bold');
+      }
+      r.addHit(x, y, tw, h, null, { onTap: t.tap });
+    }
+  }
+
+  /* ---------------- 浮层面板 ---------------- */
+  panelFrame(titleW) {
+    const r = this.r;
+    r.fillRect(0, 0, r.DW, r.DH, C.mask);
+    r.addHit(0, 0, r.DW, r.DH, null, { onTap: () => { this.closeOverlay(); } }); // 遮罩关闭
+    const px = 40, py = 120, pw = r.DW - 80, ph = r.DH - 200;
+    r.fillRoundRect(px, py, pw, ph, 32, C.card);
+    r.addHit(px, py, pw, ph, null, { onTap: () => {} }); // 阻止穿透
+    r.text(titleW, px + 40, py + 52, 32, C.text, 'left', 'middle', 'bold');
+    r.text('✕', px + pw - 44, py + 52, 30, C.subText, 'center', 'middle');
+    r.addHit(px + pw - 80, py + 24, 72, 60, null, { onTap: () => { this.closeOverlay(); } });
+    return { px, py, pw, ph, listY: py + 96 };
+  }
+
+  drawLevelsPanel() {
+    const r = this.r;
+    const p = this.panelFrame('选择关卡');
+    const cols = 8, cellW = 70, gap = 12;
+    const startX = p.px + (p.pw - (cols * cellW + (cols - 1) * gap)) / 2;
+    const clipTop = p.listY;
+    const clipBottom = p.py + p.ph - 24;
+    this.clipRegion(p.px, clipTop, p.pw, clipBottom - clipTop);
+
+    for (let i = 0; i < TOTAL_LEVELS; i++) {
+      const lv = i + 1;
+      const row = Math.floor(i / cols), col = i % cols;
+      const x = startX + col * (cellW + gap);
+      const y = clipTop + row * (cellW + gap) - this.listScroll.levels;
+      if (y + cellW < clipTop || y > clipBottom) continue;
+      const locked = lv > this.maxLevel;
+      const done = !!this.bestTimes[lv];
+      const current = lv === this.level;
+      let bg = C.lightBg;
+      if (done) bg = C.green;
+      if (current) bg = C.coral;
+      if (locked) bg = C.border;
+      r.fillRoundRect(x, y, cellW, cellW, 12, bg);
+      r.text(String(lv), x + cellW / 2, y + cellW / 2, 28, locked ? C.subText : '#ffffff', 'center', 'middle', 'bold');
+      if (done) r.text('✓', x + cellW - 18, y + 16, 18, '#ffffff', 'center', 'middle');
+      if (!locked) r.addHit(x, y, cellW, cellW, null, { onTap: () => this.loadLevel(lv) });
+    }
+    r.restore();
+  }
+
+  drawRankPanel() {
+    const r = this.r;
+    const p = this.panelFrame('排行榜 TOP20');
+    const meText = !this.rankReady ? '未启用' : (this.meInfo ? ('第' + this.meInfo.rank + '名') : '未上榜');
+    // 排名规则说明紧凑排列；「我的排名」并入下方用时表头行，不再单独占一行
+    r.text('按 关数 → 总用时 → 本关用时 排名', p.px + 40, p.py + 76, 17, C.subText, 'left', 'middle');
+    r.text('本关=到达该关所用时间', p.px + 40, p.py + 98, 17, C.subText, 'left', 'middle');
+    // 统一列坐标（表头与数据行共用，避免错位）
+    const colLevel = p.px + 410;
+    const colTotal = p.px + 530;
+    const colSingle = p.px + p.pw - 24; // 右对齐
+    const headY = p.py + 128;
+    r.text('我的排名：' + meText, p.px + 40, headY, 21, C.coral, 'left', 'middle', 'bold');
+    r.text('关数', colLevel, headY, 20, C.subText, 'center', 'middle', 'bold');
+    r.text('总用时', colTotal, headY, 20, C.subText, 'center', 'middle', 'bold');
+    r.text('本关', colSingle, headY, 20, C.subText, 'right', 'middle', 'bold');
+    const listY = p.py + 150;
+    const clipBottom = p.py + p.ph - 20;
+    this.clipRegion(p.px, listY, p.pw, clipBottom - listY);
+    if (!this.rankReady) {
+      this.wrapText('排行榜未启用：请先在云开发控制台开通云开发、填入环境 ID 并部署 rank 云函数后重启游戏。',
+        p.px + p.pw / 2, listY + 80, p.pw - 60, 24, C.subText);
+    } else if (!this.rankList.length) {
+      r.text('还没有人上榜，快来抢占第一名！', p.px + p.pw / 2, listY + 80, 24, C.subText, 'center', 'middle');
+    }
+    const medals = [
+      { row: '#fff4d6', badge: '#f5b942', label: '冠' },
+      { row: '#eef1f6', badge: '#b7c2d6', label: '亚' },
+      { row: '#fbeee2', badge: '#d98a56', label: '季' },
+    ];
+    for (let i = 0; i < this.rankList.length; i++) {
+      const item = this.rankList[i];
+      const y = listY + i * 92 - this.listScroll.rank;
+      if (y + 84 < listY || y > clipBottom) continue;
+      const medal = i < 3 ? medals[i] : null;
+      if (medal) {
+        // 前三名：整行淡色高亮 + 金银铜徽章 + 称号，视觉上明显区别于其余名次
+        r.fillRoundRect(p.px + 12, y, p.pw - 24, 84, 14, medal.row);
+        r.fillRoundRect(p.px + 32, y + 18, 48, 48, 24, '#ffffff');
+        r.fillRoundRect(p.px + 35, y + 21, 42, 42, 21, medal.badge);
+        r.text(String(i + 1), p.px + 56, y + 42, 24, '#ffffff', 'center', 'middle', 'bold');
+      } else {
+        if (item.isMe) r.fillRoundRect(p.px + 12, y, p.pw - 24, 84, 14, C.toolActive);
+        r.text(String(item.rank), p.px + 56, y + 42, 26, C.subText, 'center', 'middle');
+      }
+      const nameText = item.isMe ? item.nickname + '（我）' : item.nickname;
+      r.text(nameText, p.px + 108, y + 42, 24, C.text, 'left', 'middle');
+      if (medal) {
+        const nw = r.ctx.measureText(nameText).width;
+        const lx = Math.min(p.px + 108 + nw + 10, colLevel - 30);
+        r.text(medal.label, lx, y + 42, 18, medal.badge, 'left', 'middle', 'bold');
+      }
+      r.text(String(item.maxLevel), colLevel, y + 42, 24, C.subText, 'center', 'middle');
+      r.text(item.totalText, colTotal, y + 42, 23, C.text, 'center', 'middle', 'bold');
+      r.text(item.timeText, colSingle, y + 42, 23, C.subText, 'right', 'middle');
+    }
+    r.restore();
+  }
+
+  // 统一关闭浮层：好友榜需要通知子域隐藏并重置状态
+  closeOverlay() {
+    if (this.overlay === 'friendRank' && this.openDataContext) {
+      this.friendRankActive = false;
+      try { this.openDataContext.postMessage({ action: 'hide' }); } catch (e) {}
+    }
+    this.overlay = null;
+  }
+
+  // 微信好友排行榜面板：主域画框架，子域 canvas 贴到列表区
+  drawFriendRankPanel() {
+    const r = this.r;
+    const p = this.panelFrame('微信好友排行榜');
+    // 列表区域（子域 canvas 将贴到这里）
+    const listX = p.px + 12;
+    const listY = p.py + 96;
+    const listW = p.pw - 24;
+    const listH = p.ph - 116;
+
+    if (!this.openDataContext || !this.sharedCanvas) {
+      r.text('当前环境不支持好友排行榜', r.DW / 2, listY + listH / 2, 26, C.subText, 'center', 'middle');
+      return;
+    }
+
+    // 首次打开时：主域设置共享画布尺寸（微信官方要求），再通知子域拉取数据
+    if (!this.friendRankActive) {
+      this.friendRankActive = true;
+      const pxW = Math.round(listW * r.dpr);
+      const pxH = Math.round(listH * r.dpr);
+      if (this.sharedCanvas.width !== pxW || this.sharedCanvas.height !== pxH) {
+        this.sharedCanvas.width = pxW;
+        this.sharedCanvas.height = pxH;
+      }
+      const view = { w: listW, h: listH, scale: r.scale };
+      try {
+        this.openDataContext.postMessage({ action: 'show', view: view, dpr: r.dpr });
+      } catch (e) { console.warn('[好友榜] 通知子域失败:', e); }
+    }
+
+    // 把子域 canvas 贴到列表区
+    try {
+      r.save();
+      r.ctx.drawImage(this.sharedCanvas, listX, listY, listW, listH);
+      r.restore();
+    } catch (e) {
+      r.text('好友榜加载中…', r.DW / 2, listY + listH / 2, 26, C.subText, 'center', 'middle');
+    }
+  }
+
+  clipRegion(x, y, w, h) {
+    const c = this.r.ctx;
+    c.save();
+    c.beginPath();
+    c.rect(x, y, w, h);
+    c.clip();
+  }
+
+  drawWinPanel() {
+    const r = this.r;
+    r.fillRect(0, 0, r.DW, r.DH, C.mask);
+    r.addHit(0, 0, r.DW, r.DH, null, { onTap: () => {} });
+    const cw = 560;
+    const hasNew = !!this.isNewBest;
+    const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0);
+    const y = Math.max(20, (r.DH - ch) / 2);
+    const x = (r.DW - cw) / 2;
+    r.fillRoundRect(x, y, cw, ch, 32, C.card);
+    r.cat(r.DW / 2, y + 96, 108, this.allCleared ? C.coral : C.greenDeep);
+    r.text('第' + this.level + '关通过！', r.DW / 2, y + 180, 40, C.text, 'center', 'middle', 'bold');
+    r.text(this.allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦',
+      r.DW / 2, y + 226, 22, C.subText, 'center', 'middle');
+    // 统计四宫格：本关用时 / 总通关用时 / 最佳本关 / 最佳总通关
+    const ws = this.winStats || {
+      single: this.seconds, total: this.totalTime(),
+      bestSingle: this.bestTimes[this.level], bestTotal: this.bestTotal,
+    };
+    const sy = y + 278;
+    const boxH = 168;
+    r.fillRoundRect(x + 50, sy, cw - 100, boxH, 20, C.lightBg);
+    r.fillRect(x + cw / 2 - 1, sy + 16, 2, boxH - 32, C.border);
+    r.fillRect(x + 60, sy + boxH / 2 - 1, cw - 120, 2, C.border);
+    const qw = (cw - 100) / 2;
+    const qh = boxH / 2;
+    const t = function (v) { return v ? formatTime(v) : '--:--'; };
+    // 左上：本关用时
+    r.text('本关用时', x + 50 + qw / 2, sy + qh * 0.32, 20, C.subText, 'center', 'middle');
+    r.text(t(ws.single), x + 50 + qw / 2, sy + qh * 0.72, 32, C.text, 'center', 'middle', 'bold');
+    // 右上：总通关用时
+    r.text('总通关用时', x + 50 + qw * 1.5, sy + qh * 0.32, 20, C.subText, 'center', 'middle');
+    r.text(t(ws.total), x + 50 + qw * 1.5, sy + qh * 0.72, 32, C.text, 'center', 'middle', 'bold');
+    // 左下：最佳本关
+    r.text('最佳本关', x + 50 + qw / 2, sy + qh * 1.32, 20, C.subText, 'center', 'middle');
+    r.text(t(ws.bestSingle), x + 50 + qw / 2, sy + qh * 1.72, 32, C.greenDeep, 'center', 'middle', 'bold');
+    // 右下：最佳总通关
+    r.text('最佳总通关', x + 50 + qw * 1.5, sy + qh * 1.32, 20, C.subText, 'center', 'middle');
+    r.text(t(ws.bestTotal), x + 50 + qw * 1.5, sy + qh * 1.72, 32, C.greenDeep, 'center', 'middle', 'bold');
+    let by = sy + boxH + 22;
+    if (this.isNewBest) {
+      r.text('★ 新纪录 ★', r.DW / 2, by, 26, C.orange, 'center', 'middle', 'bold');
+      by += 52;
+    }
+    if (!this.allCleared) {
+      r.fillRoundRect(x + 80, by, cw - 160, 76, 38, C.coral);
+      r.text('下一关', r.DW / 2, by + 38, 30, '#ffffff', 'center', 'middle', 'bold');
+      r.addHit(x + 80, by, cw - 160, 76, null, { onTap: () => this.onNextLevel() });
+      by += 92;
+    }
+    r.fillRoundRect(x + 80, by, cw - 160, 68, 34, C.lightBg);
+    r.text('选择关卡', r.DW / 2, by + 34, 26, C.text, 'center', 'middle');
+    r.addHit(x + 80, by, cw - 160, 68, null, { onTap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } });
+    by += 80;
+    r.fillRoundRect(x + 80, by, cw - 160, 68, 34, C.greenDeep);
+    r.text('邀请好友', r.DW / 2, by + 34, 26, '#ffffff', 'center', 'middle', 'bold');
+    r.addHit(x + 80, by, cw - 160, 68, null, { onTap: () => this.inviteFriend() });
+  }
+
+  drawDialog() {
+    const r = this.r;
+    const d = this.dialog;
+    r.fillRect(0, 0, r.DW, r.DH, C.mask);
+    r.addHit(0, 0, r.DW, r.DH, null, { onTap: () => {} });
+    const w = 600;
+    const fontSize = 28, lineH = 42;
+    const titleH = d.title ? 100 : 60;
+    const btnH = 76;
+    // 先测量文字行数，动态决定弹窗高度
+    const lines = this.measureLines(d.content || '', w - 100, fontSize);
+    const contentH = lines.length * lineH;
+    const h = Math.min(r.DH - 120, titleH + contentH + 40 + btnH + 40);
+    const x = (r.DW - w) / 2, y = (r.DH - h) / 2;
+    r.fillRoundRect(x, y, w, h, 32, C.card);
+
+    let cy = y + titleH - 20;
+    if (d.title) {
+      r.text(d.title, r.DW / 2, y + 56, 36, C.text, 'center', 'middle', 'bold');
+    }
+    // 绘制正文
+    for (let i = 0; i < lines.length; i++) {
+      r.text(lines[i], r.DW / 2, cy + 20 + i * lineH, fontSize, C.text, 'center', 'middle');
+    }
+    const by = y + h - btnH - 36;
+    if (d.showCancel !== false) {
+      const bw = (w - 130) / 2;
+      r.fillRoundRect(x + 50, by, bw, btnH, 20, C.lightBg);
+      r.text('取消', x + 50 + bw / 2, by + btnH / 2, 28, C.text, 'center', 'middle');
+      r.addHit(x + 50, by, bw, btnH, null, { onTap: () => { this.dialog = null; } });
+      const cx2 = x + 50 + bw + 30;
+      r.fillRoundRect(cx2, by, bw, btnH, 20, C.coral);
+      r.text(d.confirm || '确定', cx2 + bw / 2, by + btnH / 2, 28, '#ffffff', 'center', 'middle');
+      r.addHit(cx2, by, bw, btnH, null, { onTap: () => { const cb = d.onConfirm; this.dialog = null; if (cb) cb(); } });
+    } else {
+      r.fillRoundRect(x + 80, by, w - 160, btnH, 38, C.coral);
+      r.text(d.confirm || '知道了', r.DW / 2, by + btnH / 2, 28, '#ffffff', 'center', 'middle', 'bold');
+      r.addHit(x + 80, by, w - 160, btnH, null, { onTap: () => { const cb = d.onConfirm; this.dialog = null; if (cb) cb(); } });
+    }
+  }
+
+  // 按像素宽度测量并折行，返回行数组
+  measureLines(str, maxW, size) {
+    const r = this.r;
+    r.ctx.font = size + 'px -apple-system, "PingFang SC", sans-serif';
+    const chars = String(str).split('');
+    let line = '';
+    const lines = [];
+    for (let i = 0; i < chars.length; i++) {
+      const ch = chars[i];
+      if (ch === '\n') { lines.push(line); line = ''; continue; }
+      const test = line + ch;
+      if (r.ctx.measureText(test).width > maxW && line) { lines.push(line); line = ch; }
+      else line = test;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  wrapText(str, cx, y, maxW, size, color) {
+    const lines = this.measureLines(str, maxW, size);
+    for (let i = 0; i < lines.length; i++) {
+      this.r.text(lines[i], cx, y + i * (size + 12), size, color, 'center', 'middle');
+    }
+  }
+
+  openSettings() {
+    this.settings = {
+      items: [
+        { label: '选择关卡', tap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } },
+        { label: '重玩本关', tap: () => this.loadLevel(this.level) },
+        { label: '音效：' + (this.soundOn ? '开' : '关'), tap: () => { this.soundOn = !this.soundOn; sound.setEnabled(this.soundOn); if (this.soundOn) sound.play('tap'); this.persist(); } },
+        { label: '重置进度', tap: () => { this.dialog = {
+          title: '重置进度', content: '确定要清空关卡进度和成绩吗？', confirm: '确定重置', showCancel: true,
+          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestTotal = 0; this.loadLevel(1); },
+        }; } },
+        { label: '好友排行榜', tap: () => { this.overlay = 'friendRank'; this.friendRankActive = false; } },
+        { label: '排行榜', tap: () => { this.overlay = 'rank'; this.refreshRank(); } },
+        { label: '邀请好友', tap: () => this.inviteFriend() },
+      ],
+    };
+  }
+
+  drawSettings() {
+    const r = this.r;
+    r.fillRect(0, 0, r.DW, r.DH, C.mask);
+    const items = this.settings.items;
+    const w = 560, ih = 88;
+    const h = items.length * ih + 90;
+    const x = (r.DW - w) / 2, y = (r.DH - h) / 2;
+    r.fillRoundRect(x, y, w, h, 32, C.card);
+    r.text('设置', r.DW / 2, y + 52, 32, C.text, 'center', 'middle', 'bold');
+    for (let i = 0; i < items.length; i++) {
+      const iy = y + 90 + i * ih;
+      r.text(items[i].label, x + 40, iy + ih / 2, 28, C.text, 'left', 'middle');
+      if (i < items.length - 1) r.fillRect(x + 30, iy + ih - 2, w - 60, 2, C.border);
+      r.addHit(x, iy, w, ih, null, { onTap: () => { this.settings = null; items[i].tap(); } });
+    }
+    r.addHit(0, y - 200, r.DW, 200, null, { onTap: () => { this.settings = null; } });
+    r.addHit(0, y + h, r.DW, 200, null, { onTap: () => { this.settings = null; } });
+  }
+
+  drawToast() {
+    const r = this.r;
+    const text = this.toast.text;
+    r.ctx.font = '26px sans-serif';
+    const w = Math.min(r.DW - 100, r.ctx.measureText(text).width + 60);
+    const x = (r.DW - w) / 2, y = r.DH - 200;
+    r.fillRoundRect(x, y, w, 64, 32, 'rgba(61,70,103,0.88)');
+    r.text(text, r.DW / 2, y + 32, 26, '#ffffff', 'center', 'middle');
+  }
+}
+
+module.exports = Game;

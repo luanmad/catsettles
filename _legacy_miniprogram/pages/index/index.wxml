@@ -1,0 +1,177 @@
+<view class="page">
+  <view class="top-bar">
+    <view class="gear" bindtap="onSettings">⚙️</view>
+    <view class="level-title" bindtap="onOpenLevels">第{{level}}关</view>
+    <view class="gear" bindtap="onOpenLevels">☰</view>
+  </view>
+
+  <view class="hearts-row">
+    <view class="q-mark" bindtap="onRules">?</view>
+    <view class="hearts-box {{heartShake ? 'hearts-shake' : ''}}">
+      <text
+        wx:for="{{heartSlots}}"
+        wx:key="index"
+        class="heart {{item ? '' : 'heart-lost'}}"
+      >{{item ? '❤️' : '🤍'}}</text>
+    </view>
+  </view>
+
+  <view class="progress-row">
+    <view class="progress-pill">
+      <text class="pill-cat">🐱</text>
+      <text class="pill-num">{{catsPlaced}} / {{size}}</text>
+    </view>
+    <view class="progress-pill time-pill">
+      <text class="pill-cat">⏱️</text>
+      <text class="pill-num">{{timeText}}</text>
+    </view>
+    <view wx:if="{{rankReady}}" class="progress-pill rank-pill" bindtap="onOpenRank">
+      <text class="pill-cat">🏆</text>
+      <text class="pill-num">{{myRankText}}</text>
+    </view>
+  </view>
+
+  <view class="rules-card">
+    <view class="rule-item">
+      <view class="mini-grid">
+        <view class="sq g1"></view>
+        <view class="sq g1 sq-cat">🐱</view>
+        <view class="sq g1"></view>
+        <view class="sq g2"></view>
+        <view class="sq g2"></view>
+        <view class="sq g2"></view>
+      </view>
+      <view class="rule-text"><text>一种颜色</text><text>1只小猫</text></view>
+    </view>
+    <view class="rule-item">
+      <view class="mini-grid">
+        <view class="sq g1 sq-cat">🐱</view>
+        <view class="sq g2"></view>
+        <view class="sq g1"></view>
+        <view class="sq g2"></view>
+        <view class="sq g2"></view>
+        <view class="sq g3 sq-cat">🐱</view>
+      </view>
+      <view class="rule-text"><text>每行每列</text><text>各1只小猫</text></view>
+    </view>
+    <view class="rule-item">
+      <view class="mini-grid">
+        <view class="sq g1 sq-cat">🐱</view>
+        <view class="sq g2"></view>
+        <view class="sq g1"></view>
+        <view class="sq g2"></view>
+        <view class="sq g3 sq-cat">🐱</view>
+        <view class="sq g2"></view>
+      </view>
+      <view class="rule-text"><text>小猫不能</text><text>相邻</text></view>
+    </view>
+  </view>
+
+  <view class="board" style="width:{{boardInner}}px;height:{{boardInner}}px;">
+    <view
+      wx:for="{{cells}}"
+      wx:key="idx"
+      class="cell {{item.state === 'cat' ? 'cell-cat' : ''}} {{item.state === 'ban' ? 'cell-ban' : ''}}"
+      style="background:{{item.color}};width:{{cellSize}}px;height:{{cellSize}}px;"
+      data-idx="{{item.idx}}"
+      bindtap="onCellTap"
+      bindlongpress="onCellLongPress"
+    >
+      <text wx:if="{{item.state === 'cat'}}" class="cell-cat-face" style="font-size:{{cellFont}}px;">🐱</text>
+      <text wx:elif="{{item.state === 'ban'}}" class="cell-ban-mark {{item.auto ? 'cell-ban-auto' : ''}}" style="font-size:{{cellFontSmall}}px;">{{item.auto ? '❌' : '✕'}}</text>
+      <text wx:elif="{{colorblind}}" class="cell-symbol" style="font-size:{{cellFontTiny}}px;">{{item.symbol}}</text>
+    </view>
+  </view>
+
+  <view class="bottom-bar">
+    <view class="tool" bindtap="onClear">
+      <text class="tool-icon">🗑️</text>
+      <text class="tool-label">清除</text>
+    </view>
+    <view class="tool {{undoLeft > 0 ? '' : 'tool-muted'}}" bindtap="onUndo">
+      <text class="tool-icon">↩️</text>
+      <text class="tool-label">撤销</text>
+    </view>
+    <view class="tool {{markMode ? 'tool-active' : ''}}" bindtap="onToggleMark">
+      <text class="tool-icon">✕</text>
+      <text class="tool-label">标记</text>
+    </view>
+    <view class="tool {{hintsLeft > 0 ? '' : 'tool-muted'}}" bindtap="onHint">
+      <text class="tool-icon">💡</text>
+      <text class="tool-label">提示</text>
+      <view class="badge" wx:if="{{hintsLeft > 0}}">{{hintsLeft}}</view>
+    </view>
+    <view class="tool {{colorblind ? 'tool-active' : ''}}" bindtap="onToggleColorblind">
+      <text class="tool-icon">👁️</text>
+      <text class="tool-label">色盲模式</text>
+    </view>
+  </view>
+
+  <view wx:if="{{showLevels}}" class="overlay overlay-levels" catchtap="onCloseLevels">
+    <view class="panel" catchtap="noop">
+      <view class="panel-head">
+        <text class="panel-title">选择关卡</text>
+        <text class="panel-close" bindtap="onCloseLevels">✕</text>
+      </view>
+      <scroll-view class="level-scroll" scroll-y>
+        <view class="level-grid">
+          <view
+            wx:for="{{levelList}}"
+            wx:key="level"
+            class="level-cell {{item.locked ? 'level-locked' : ''}} {{item.current ? 'level-current' : ''}} {{item.done ? 'level-done' : ''}}"
+            data-level="{{item.level}}"
+            bindtap="onPickLevel"
+          >
+            <text class="level-num">{{item.level}}</text>
+            <text wx:if="{{item.done}}" class="level-tick">✓</text>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view wx:if="{{showRank}}" class="overlay overlay-levels" catchtap="onCloseRank">
+    <view class="panel" catchtap="noop">
+      <view class="panel-head">
+        <text class="panel-title">排行榜 TOP20</text>
+        <text class="panel-close" bindtap="onCloseRank">✕</text>
+      </view>
+      <view class="rank-me">我的排名：{{meInfo ? '第' + meInfo.rank + '名' : '未上榜'}}</view>
+      <scroll-view class="level-scroll" scroll-y>
+        <view
+          wx:for="{{rankList}}"
+          wx:key="rank"
+          class="rank-row {{item.isMe ? 'rank-row-me' : ''}}"
+        >
+          <text class="rank-no">{{item.rank}}</text>
+          <text class="rank-name">{{item.nickname}}</text>
+          <text class="rank-level">第{{item.maxLevel}}关</text>
+          <text class="rank-time">{{item.timeText}}</text>
+        </view>
+        <view wx:if="{{!rankList.length}}" class="rank-empty">还没有人上榜，快来抢占第一名！</view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <view wx:if="{{won}}" class="overlay" catchtap="noop">
+    <view class="win-card">
+      <text class="win-emoji">{{allCleared ? '😻' : '😸'}}</text>
+      <text class="win-title">第{{level}}关通过！</text>
+      <text class="win-sub">{{allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦'}}</text>
+      <view class="win-stats">
+        <view class="stat">
+          <text class="stat-label">用时</text>
+          <text class="stat-value">{{timeText}}</text>
+        </view>
+        <view class="stat-line"></view>
+        <view class="stat">
+          <text class="stat-label">最佳</text>
+          <text class="stat-value">{{bestText}}</text>
+        </view>
+      </view>
+      <view wx:if="{{isNewBest}}" class="win-new">🎉 新纪录</view>
+      <view wx:if="{{!allCleared}}" class="win-btn" bindtap="onNextLevel">下一关</view>
+      <view class="win-btn-ghost" bindtap="onOpenLevels">选择关卡</view>
+    </view>
+  </view>
+</view>

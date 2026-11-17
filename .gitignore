@@ -1,0 +1,9 @@
+# 工具生成的本地数据与缓存
+.workbuddy/
+.wbapp_*.genie
+node_modules/
+
+# 系统 / 编辑器临时文件
+Thumbs.db
+.DS_Store
+*.log
