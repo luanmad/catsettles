@@ -277,6 +277,16 @@ check('排行榜：我的排名并入用时表头行、前三名有冠亚季标�
     if (!drawnTexts.some(function (t) { return t.s === label; })) throw new Error('缺少前三名标识: ' + label);
   });
 });
+check('浮层关闭按钮避开右上角微信胶囊区', function () {
+  g.overlay = 'rank';
+  drawnTexts.length = 0;
+  g.render();
+  g.closeOverlay();
+  const close = drawnTexts.find(function (t) { return t.s === '✕'; });
+  if (!close) throw new Error('未绘制关闭按钮');
+  // 微信胶囊约占据画布右侧 190 逻辑px，关闭按钮须落在其左侧，避免误触退出小程序
+  if (close.x > g.r.DW - 190) throw new Error('关闭按钮过于靠近胶囊: x=' + close.x + ', 上限=' + (g.r.DW - 190));
+});
 
 g.stopTimer();
 console.log('\n通过：' + pass + ' / ' + total);

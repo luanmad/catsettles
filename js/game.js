@@ -851,8 +851,10 @@ class Game {
     r.fillRoundRect(px, py, pw, ph, 32, C.card);
     r.addHit(px, py, pw, ph, null, { onTap: () => {} }); // 阻止穿透
     r.text(titleW, px + 40, py + 52, 32, C.text, 'left', 'middle', 'bold');
-    r.text('✕', px + pw - 44, py + 52, 30, C.subText, 'center', 'middle');
-    r.addHit(px + pw - 80, py + 24, 72, 60, null, { onTap: () => { this.closeOverlay(); } });
+    // 关闭按钮避开右上角微信胶囊（胶囊约占据右侧 190 逻辑px），左移防止误触退出小程序
+    const closeX = px + pw - 200;
+    r.text('✕', closeX, py + 52, 30, C.subText, 'center', 'middle');
+    r.addHit(closeX - 34, py + 24, 68, 60, null, { onTap: () => { this.closeOverlay(); } });
     return { px, py, pw, ph, listY: py + 96 };
   }
 
