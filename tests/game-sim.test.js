@@ -485,12 +485,13 @@ check('区域高亮：按住格子高亮同区域，拖动/松手取消', functi
 check('多解法收集：不同摆法分别记录、重复不累加', function () {
   const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
   const LV = 16; // 9x9 多解关
-  g.loadLevel(LV);
+  const SEED = 4242;
+  g.loadLevel(LV, SEED);
   const n = g.size;
   const res = puzzleLib.countSolutions(n, g.region, 2);
   if (res.count < 2) throw new Error('测试关卡应有多解');
   function play(cols) {
-    g.loadLevel(LV);
+    g.loadLevel(LV, SEED);
     for (let r = 0; r < n; r++) g.onCellTap(r * n + cols[r]);
   }
   play(res.solutions[0]);
@@ -503,21 +504,33 @@ check('多解法收集：不同摆法分别记录、重复不累加', function (
   if (g.foundSolutionCount(LV) !== second) throw new Error('重复摆法不应累加');
   g.render();
 });
-check('关卡种子分享：种子码可解析回关号', function () {
-  g.loadLevel(26);
+check('关卡种子分享：随机种子码可还原同一棋盘', function () {
+  g.loadLevel(26, 12345);
+  const seed = g.currentSeed;
+  if (seed !== 12345) throw new Error('指定种子未生效');
   g.inviteFriend();
   const shares = global.__shares || [];
   const s = shares[shares.length - 1];
-  if (s.query.indexOf('seed=') < 0) throw new Error('分享 query 缺少种子');
   const m = s.query.match(/seed=([^&]+)/);
-  if (!m) throw new Error('无法提取种子码');
-  if (m[1] !== 'SQ') throw new Error('第26关种子码应为SQ，实际' + m[1]);
-  // 通过种子启动应跳到同一关
-  global.__launchOptions = { query: { from: 'invite', seed: m[1] } };
+  if (!m) throw new Error('分享 query 缺少种子');
+  const code = m[1];
+  if (code.indexOf('-') < 0) throw new Error('种子码应包含随机种子部分: ' + code);
+  // 按种子启动应跳到同一关、同一棋盘
+  global.__launchOptions = { query: { from: 'invite', seed: code, level: '26' } };
   const g2 = new Game(wx.createCanvas());
   g2.stopTimer();
   if (g2.level !== 26) throw new Error('按种子启动未跳到第26关，实际' + g2.level);
+  if (g2.currentSeed !== seed) throw new Error('按种子启动棋盘种子不一致');
+  if (JSON.stringify(g2.region) !== JSON.stringify(g.region)) throw new Error('同一种子棋盘不同');
   global.__launchOptions = null;
+});
+check('随机棋盘：换一题生成不同种子与新棋盘', function () {
+  g.loadLevel(20, 777);
+  const seed1 = g.currentSeed, region1 = JSON.stringify(g.region);
+  g.rerollLevel();
+  if (g.currentSeed === seed1) throw new Error('换一题后种子未变');
+  if (JSON.stringify(g.region) === region1) throw new Error('换一题后棋盘未变');
+  if (g.levelSeeds[20] !== g.currentSeed) throw new Error('新种子未存档');
 });
 check('提示代价：用过提示最高2星', function () {
   g.loadLevel(16);

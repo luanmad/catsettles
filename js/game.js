@@ -56,12 +56,20 @@ function formatTime(sec) {
   return (m < 10 ? '0' + m : m) + ':' + (r < 10 ? '0' + r : r);
 }
 
-// 关卡种子码：谜题完全由关号决定，用 base36 编码关号作为可分享的“同一局”标识
-function seedCode(level) { return 'S' + Math.max(1, Math.floor(level)).toString(36).toUpperCase(); }
-function levelFromSeed(code) {
-  if (!code || typeof code !== 'string' || code.charAt(0) !== 'S') return 0;
-  const lv = parseInt(code.slice(1), 36);
-  return lv >= 1 && lv <= TOTAL_LEVELS ? lv : 0;
+// 关卡种子码：编码"关号 + 随机棋盘种子"，同一码进同一关且棋盘完全相同，供同题分享比拼。
+// 格式 S<关号36>-<种子36>，例如 SC-1A2B3C；旧格式 S<关号> 仍兼容（沿用固定种子）。
+function seedCode(level, seed) {
+  const lv = Math.max(1, Math.floor(level)).toString(36).toUpperCase();
+  if (typeof seed !== 'number' || !isFinite(seed)) return 'S' + lv;
+  return 'S' + lv + '-' + (seed >>> 0).toString(36).toUpperCase();
+}
+function parseSeedCode(code) {
+  if (!code || typeof code !== 'string' || code.charAt(0) !== 'S') return null;
+  const parts = code.slice(1).split('-');
+  const lv = parseInt(parts[0], 36);
+  if (!(lv >= 1 && lv <= TOTAL_LEVELS)) return null;
+  const seed = parts.length > 1 ? parseInt(parts[1], 36) : null;
+  return { level: lv, seed: (seed !== null && isFinite(seed)) ? (seed >>> 0) : null };
 }
 
 class Game {
@@ -88,6 +96,7 @@ class Game {
     this.bestTotal = save.bestTotal || 0; // 历史最佳总通关用时
     this.maxLevel = Math.max(save.maxLevel || 1, 1);
     this.unlockedCats = Array.isArray(save.unlockedCats) ? save.unlockedCats : [];
+    this.levelSeeds = save.levelSeeds || {}; // { 关号: 棋盘随机种子 }
     this.foundSolutions = save.foundSolutions || {}; // { 关号: { 解法编码: 1 } }
     this.bestCombo = save.bestCombo || 0;
     this.perfectClears = save.perfectClears || 0;
@@ -152,17 +161,20 @@ class Game {
     this.layout = null;
     this.boardHit = []; // 每格命中矩形，长按检测用
 
-    // 分享进入：解析 query 中的种子码，跳到同一关比拼
+    // 分享进入：解析 query 中的种子码，跳到同一关、同一随机棋盘比拼
     let startLevel = Math.min(Math.max(save.level || 1, 1), this.maxLevel);
+    let startSeed = null;
     try {
       const opts = (typeof wx.getLaunchOptionsSync === 'function') ? wx.getLaunchOptionsSync() : null;
       const q = (opts && opts.query) || {};
-      const fromSeed = levelFromSeed(q.seed);
-      const fromLevel = parseInt(q.level, 10);
-      const shared = fromSeed || (fromLevel >= 1 && fromLevel <= TOTAL_LEVELS ? fromLevel : 0);
-      if (shared) startLevel = shared;
+      const parsed = parseSeedCode(q.seed);
+      if (parsed) { startLevel = parsed.level; startSeed = parsed.seed; }
+      else {
+        const fromLevel = parseInt(q.level, 10);
+        if (fromLevel >= 1 && fromLevel <= TOTAL_LEVELS) startLevel = fromLevel;
+      }
     } catch (e) {}
-    this.loadLevel(startLevel);
+    this.loadLevel(startLevel, startSeed);
     this.bindInput();
     this.setupShare();
     this.refreshRank();
@@ -178,9 +190,10 @@ class Game {
       if (typeof wx.onShareAppMessage === 'function') {
         const self = this;
         wx.onShareAppMessage(function () {
+          const code = seedCode(self.level, self.currentSeed);
           return {
-            title: '猫猫请落座 · 挑战同题第' + self.level + '关（种子' + seedCode(self.level) + '）！',
-            query: 'from=invite&level=' + self.level + '&seed=' + seedCode(self.level),
+            title: '猫猫请落座 · 挑战同题第' + self.level + '关（种子' + code + '）！',
+            query: 'from=invite&level=' + self.level + '&seed=' + code,
             imageUrl: '',
           };
         });
@@ -198,6 +211,7 @@ class Game {
         bestStars: this.bestStars,
         bestTotal: this.bestTotal,
         unlockedCats: this.unlockedCats,
+        levelSeeds: this.levelSeeds,
         foundSolutions: this.foundSolutions,
         bestCombo: this.bestCombo,
         perfectClears: this.perfectClears,
@@ -233,10 +247,19 @@ class Game {
   levelSize(level) { return this.levelConfig(level).size; }
   hintQuota(level) { return 1; }
 
-  loadLevel(level) {
+  loadLevel(level, seedOverride) {
     const cfg = this.levelConfig(level);
     const size = cfg.size;
-    const rand = puzzle.rng(level * 1013904223 + 12345);
+    // 关卡棋盘种子：优先用指定种子（分享进入/换题），否则取存档，首次随机生成并存档
+    let seed = (typeof seedOverride === 'number' && isFinite(seedOverride))
+      ? (seedOverride >>> 0)
+      : this.levelSeeds[level];
+    if (typeof seed !== 'number' || !isFinite(seed)) {
+      seed = Math.floor(Math.random() * 4294967296) >>> 0;
+    }
+    this.levelSeeds[level] = seed; // 指定/随机种子都写回存档
+    this.currentSeed = seed;
+    const rand = puzzle.rng(seed);
     const gen = puzzle.generate(size, rand);
     const colorOf = puzzle.assignColors(gen.region, size, PALETTE);
     const symbols = puzzle.shuffle(SYMBOLS.slice(), rand);
@@ -461,8 +484,11 @@ class Game {
     return cols.join(',');
   }
 
-  foundSolutionCount(level) {
-    const set = this.foundSolutions[level];
+  solutionKeyFor(level, seed) { return level + ':' + seed; }
+
+  foundSolutionCount(level, seed) {
+    const key = this.solutionKeyFor(level, typeof seed === 'number' ? seed : this.levelSeeds[level]);
+    const set = this.foundSolutions[key];
     return set ? Object.keys(set).length : 0;
   }
 
@@ -514,9 +540,10 @@ class Game {
         this.persist(Math.min(level + 1, this.maxLevel));
       }
     }
-    // 记录本次发现的摆法
-    if (!this.foundSolutions[level]) this.foundSolutions[level] = {};
-    this.foundSolutions[level][this.currentSolutionKey()] = 1;
+    // 记录本次发现的摆法（按当前随机棋盘种子归档）
+    const solKey = this.solutionKeyFor(level, this.currentSeed);
+    if (!this.foundSolutions[solKey]) this.foundSolutions[solKey] = {};
+    this.foundSolutions[solKey][this.currentSolutionKey()] = 1;
     const perfect = this.combo >= this.size && !this.usedHint;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
     if (perfect) this.perfectClears = (this.perfectClears || 0) + 1;
@@ -530,7 +557,7 @@ class Game {
       combo: this.combo,
       perfect: perfect,
       usedHint: this.usedHint,
-      solutions: this.foundSolutionCount(level),
+      solutions: this.foundSolutionCount(level, this.currentSeed),
     };
     const earned = this.checkCatUnlocks();
     this.persist(Math.min(level + 1, this.maxLevel));
@@ -645,13 +672,21 @@ class Game {
     this.loadLevel(this.level + 1);
   }
 
+  // 换一题：当前关换一个随机棋盘（成绩按关号保留，解法收集按新棋盘重新记）
+  rerollLevel() {
+    const seed = Math.floor(Math.random() * 4294967296) >>> 0;
+    this.loadLevel(this.level, seed);
+    this.showToast('换了一道新题，加油！');
+  }
+
   // 邀请好友：优先主动拉起转发；开发版受限时引导用户点右上角 ···
   inviteFriend() {
     try {
       if (typeof wx.shareAppMessage === 'function') {
+        const code = seedCode(this.level, this.currentSeed);
         wx.shareAppMessage({
-          title: '猫猫请落座 · 挑战同题第' + this.level + '关（种子' + seedCode(this.level) + '）！',
-          query: 'from=invite&level=' + this.level + '&seed=' + seedCode(this.level),
+          title: '猫猫请落座 · 挑战同题第' + this.level + '关（种子' + code + '）！',
+          query: 'from=invite&level=' + this.level + '&seed=' + code,
           imageUrl: '',
         });
         // 主动转发在开发/体验版常被微信限制；提示兜底路径
@@ -906,7 +941,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消已放的猫也扣1次撤销次数，撤销或取消都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消已放的猫也扣1次撤销次数，撤销或取消都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -1394,13 +1429,14 @@ class Game {
     this.settings = {
       items: [
         { label: '选择关卡', tap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } },
-        { label: '本关种子：' + seedCode(this.level) + '（同题挑战）', tap: () => this.inviteFriend() },
+        { label: '本关种子：' + seedCode(this.level, this.currentSeed) + '（同题挑战）', tap: () => this.inviteFriend() },
+        { label: '换一题（随机新棋盘）', tap: () => this.rerollLevel() },
         { label: '猫咪图鉴 ' + this.unlockedCats.length + '/' + CAT_COLLECTION.length, tap: () => { this.overlay = 'gallery'; this.listScroll.gallery = 0; } },
         { label: '重玩本关', tap: () => this.loadLevel(this.level) },
         { label: '音效：' + (this.soundOn ? '开' : '关'), tap: () => { this.soundOn = !this.soundOn; sound.setEnabled(this.soundOn); if (this.soundOn) sound.play('tap'); this.persist(); } },
         { label: '重置进度', tap: () => { this.dialog = {
           title: '重置进度', content: '确定要清空关卡进度和成绩吗？', confirm: '确定重置', showCancel: true,
-          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestTotal = 0; this.unlockedCats = []; this.foundSolutions = {}; this.bestCombo = 0; this.perfectClears = 0; this.loadLevel(1); },
+          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestTotal = 0; this.unlockedCats = []; this.levelSeeds = {}; this.foundSolutions = {}; this.bestCombo = 0; this.perfectClears = 0; this.loadLevel(1); },
         }; } },
         { label: '好友排行榜', tap: () => { this.overlay = 'friendRank'; this.friendRankActive = false; } },
         { label: '排行榜', tap: () => { this.overlay = 'rank'; this.refreshRank(); } },
