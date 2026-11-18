@@ -1062,22 +1062,27 @@ class Game {
     r.fillRoundRect(L.pad, y, L.W - L.pad * 2, h, 24, C.card);
     const colW = (L.W - L.pad * 2) / 3;
     const items = [
-      { sq: [[0, 1, 0], [2, 2, 2]], lines: ['一种颜色', '1只小猫'] },
-      { sq: [[1, 2, 0], [2, 2, 3]], lines: ['每行每列', '各1只小猫'] },
-      { sq: [[1, 2, 0], [2, 3, 2]], lines: ['小猫不能', '相邻'] },
+      { sq: [[0, 1, 0], [2, 2, 2]], lines: ['一种颜色', '1只小猫'], bg: '#fff1ef' },
+      { sq: [[1, 2, 0], [2, 2, 3]], lines: ['每行每列', '各1只小猫'], bg: '#eef8f6' },
+      { sq: [[1, 2, 0], [2, 3, 2]], lines: ['小猫不能', '相邻'], bg: '#f3eefc' },
     ];
+    const blockX = L.pad + 6;
+    const blockW = colW - 16;
+    const blockH = h - 18;
     for (let i = 0; i < items.length; i++) {
-      const cx = L.pad + colW * i + colW / 2;
-      this.drawMiniGrid(cx - 42, y + 22, items[i].sq);
-      r.text(items[i].lines[0], cx, y + 112, 20, C.text, 'center', 'middle');
-      r.text(items[i].lines[1], cx, y + 136, 20, C.text, 'center', 'middle');
+      const bx = blockX + colW * i;
+      const cx = bx + blockW / 2;
+      r.fillRoundRect(bx, y + 9, blockW, blockH, 18, items[i].bg);
+      this.drawMiniGrid(cx - 54, y + 24, items[i].sq);
+      r.text(items[i].lines[0], cx, y + blockH - 44, 21, C.text, 'center', 'middle', 'bold');
+      r.text(items[i].lines[1], cx, y + blockH - 18, 21, C.text, 'center', 'middle', 'bold');
     }
   }
 
   drawMiniGrid(gx, gy, map) {
     const r = this.r;
     const miniColors = [C.coral, C.green, C.purple, '#ffd166'];
-    const s = 26, g = 4;
+    const s = 34, g = 5;
     for (let row = 0; row < map.length; row++) {
       for (let col = 0; col < map[row].length; col++) {
         const v = map[row][col];
@@ -1373,7 +1378,9 @@ class Game {
     };
     const showStars = !!ws.starEnabled;
     const showCombo = (ws.combo || 0) >= 2;
-    const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0) + (showStars ? 62 : 0) + (showCombo ? 54 : 0);
+    const showScore = typeof ws.score === 'number';
+    const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0)
+      + (showStars ? 62 : 0) + (showCombo ? 54 : 0) + (showScore ? 84 : 0);
     const y = Math.max(20, (r.DH - ch) / 2);
     const x = (r.DW - cw) / 2;
     r.fillRoundRect(x, y, cw, ch, 32, C.card);
@@ -1381,25 +1388,36 @@ class Game {
     r.text('第' + this.level + '关通过！', r.DW / 2, y + 180, 40, C.text, 'center', 'middle', 'bold');
     r.text(this.allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦',
       r.DW / 2, y + 226, 22, C.subText, 'center', 'middle');
-    if (typeof ws.score === 'number') {
-      r.text('本关得分 ' + ws.score + (ws.isNewScore ? '  新高分！' : '  最高 ' + ws.bestScore),
-        r.DW / 2, y + 248, 22, C.orange, 'center', 'middle', 'bold');
+    const scoreShift = showScore ? 84 : 0;
+    if (showScore) {
+      // 得分主视觉：金色高亮卡片 + 大号分数，新高分加描边光晕与徽章
+      const scW = cw - 120, scH = 80, scY = y + 238, scX = x + 60;
+      r.fillRoundRect(scX, scY, scW, scH, 20, '#fff7e6');
+      if (ws.isNewScore) r.strokeRoundRect(scX + 2, scY + 2, scW - 4, scH - 4, 19, C.orange, 4);
+      r.text('本关得分', r.DW / 2, scY + 20, 19, C.subText, 'center', 'middle');
+      r.text(String(ws.score), r.DW / 2, scY + 50, 52, C.orange, 'center', 'middle', 'bold');
+      if (ws.isNewScore) {
+        r.fillRoundRect(scX + scW - 108, scY + 10, 96, 34, 17, C.orange);
+        r.text('新高分!', scX + scW - 60, scY + 27, 18, '#ffffff', 'center', 'middle', 'bold');
+      } else if (ws.bestScore) {
+        r.text('最高 ' + ws.bestScore, scX + scW - 16, scY + 24, 17, C.subText, 'right', 'middle');
+      }
     } else if (ws.solutions) {
       r.text('本关已发现 ' + ws.solutions + ' 种摆法', r.DW / 2, y + 248, 18, C.subText, 'center', 'middle');
     }
     if (showStars) {
       const stars = ws.stars || 0;
       for (let i = 0; i < 3; i++) {
-        r.text('★', r.DW / 2 + (i - 1) * 56, y + 262, 44, i < stars ? C.orange : C.border, 'center', 'middle', 'bold');
+        r.text('★', r.DW / 2 + (i - 1) * 56, y + 262 + scoreShift, 44, i < stars ? C.orange : C.border, 'center', 'middle', 'bold');
       }
     }
     // 连击/完美展示
     if (showCombo) {
       const msg = ws.perfect ? '完美通关！' + ws.combo + ' 连击，全程零失误' : ws.combo + ' 连击！再接再厉';
-      r.text(msg, r.DW / 2, y + 292 + (showStars ? 62 : 0), 24, ws.perfect ? C.orange : C.subText, 'center', 'middle', 'bold');
+      r.text(msg, r.DW / 2, y + 292 + scoreShift + (showStars ? 62 : 0), 24, ws.perfect ? C.orange : C.subText, 'center', 'middle', 'bold');
     }
     // 统计四宫格：本关用时 / 总通关用时 / 最佳本关 / 最佳总通关
-    const sy = y + 278 + (showStars ? 62 : 0) + (showCombo ? 54 : 0);
+    const sy = y + 278 + scoreShift + (showStars ? 62 : 0) + (showCombo ? 54 : 0);
     const boxH = 168;
     r.fillRoundRect(x + 50, sy, cw - 100, boxH, 20, C.lightBg);
     r.fillRect(x + cw / 2 - 1, sy + 16, 2, boxH - 32, C.border);

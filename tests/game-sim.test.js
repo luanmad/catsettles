@@ -635,6 +635,20 @@ check('主界面显示得分：图标+数值、无文字标签、大数字自适
   }
 });
 
+check('通关弹窗得分主视觉：显示本关得分与新高分徽章', function () {
+  g.loadLevel(1, 909);
+  g.stopTimer(); g.seconds = 0; g.winStats = null;
+  g.finishLevel();
+  g.overlay = 'win';
+  drawnTexts.length = 0;
+  g.render();
+  g.closeOverlay();
+  if (!drawnTexts.some(function (t) { return t.s === '本关得分'; })) throw new Error('未绘制得分主视觉标签');
+  if (!drawnTexts.some(function (t) { return t.s === String(g.winStats.score); })) throw new Error('未绘制大号得分数值');
+  const badge = drawnTexts.some(function (t) { return t.s === '新高分!'; });
+  const fallback = drawnTexts.some(function (t) { return t.s.indexOf('最高 ') === 0; });
+  if (!badge && !fallback) throw new Error('未绘制新高分徽章或最高分');
+});
 check('排行榜得分兜底：云端为0时本人用本地存档分数', function () {
   g.loadLevel(12, 222);
   g.totalScore = 8888;
