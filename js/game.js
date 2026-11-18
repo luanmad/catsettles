@@ -17,6 +17,20 @@ const CELL_GAP = 8;
 const MAX_HISTORY = 60;
 
 // 猫咪图鉴：按关数/星数/连击/完美通关逐步解锁
+// 通关演示数据：固定 4×4 唯一解谜题（每行猫所在列）
+const DEMO_SIZE = 4;
+const DEMO_REGION = [0, 0, 1, 1, 0, 0, 3, 1, 2, 2, 3, 1, 2, 3, 3, 3];
+const DEMO_SOLUTION = [1, 3, 0, 2];
+const DEMO_STEP_MS = 1100;
+const DEMO_STEPS = [
+  '看这里：4 种颜色 = 4 个区域，每个区域要放 1 只猫',
+  '第 1 行放 1 只：每行、每列都只能有 1 只',
+  '第 2 行放 1 只：注意不能和上一行相邻（含斜角）',
+  '第 3 行放 1 只：同样要避开已有小猫',
+  '第 4 行放 1 只：4 行 4 列 4 区域各 1 只',
+  '全部就位！每行每列每区域各 1 只、互不相邻 → 通关！',
+];
+
 const CAT_COLLECTION = [
   { id: 0, name: '橘座', color: '#f5a35c', hint: '通关第 5 关', cond: { level: 5 } },
   { id: 1, name: '奶糖', color: '#f78fb3', hint: '通关第 10 关', cond: { level: 10 } },
@@ -136,6 +150,7 @@ class Game {
     this.dialog = null; // 自绘确认弹窗
     this.settings = null; // 自绘菜单
 
+    this.demo = null; // 通关动画演示状态 { startAt }
     this.touchStartPos = null;
     this.touchStartIdx = -1;
     this.highlightRegion = -1; // 按住格子时高亮同区域
@@ -916,6 +931,7 @@ class Game {
     r.begin();
     r.clear();
     if (this.showHealthNotice) { this.drawHealthNotice(); return; }
+    if (this.demo) { this.drawDemo(); return; }
     this.computeLayout();
     r.setFill(C.pageBg);
     r.fillRect(0, 0, r.DW, r.DH);
@@ -998,7 +1014,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消、撤销按钮、清除按钮都扣1次撤销次数，用完就不能取消/撤销/清除，且都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。通关得分=关卡难度+用时+连击+完美+星级-取消-生命，累计得分越高排行榜越靠前。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消、撤销按钮、清除按钮都扣1次撤销次数，用完就不能取消/撤销/清除，且都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。通关得分=关卡难度+用时+连击+完美+星级-撤消/消除-生命，累计得分越高排行榜越靠前。想看完整通关过程，可在设置里点「看通关演示」。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -1137,6 +1153,73 @@ class Game {
 
       r.addHit(x, y, cs, cs, null, { idx: i, longPress: true, onTap: () => this.onCellTap(i) });
     }
+  }
+
+  startDemo() {
+    this.demo = { startAt: Date.now() };
+    this.settings = null;
+    this.dialog = null;
+    this.overlay = null;
+  }
+
+  // 通关动画演示：固定 4×4 谜题，按步骤逐只放猫，配文字说明，循环播放
+  drawDemo() {
+    const r = this.r;
+    const cx = r.DW / 2;
+    r.setFill(C.pageBg);
+    r.fillRect(0, 0, r.DW, r.DH);
+
+    const elapsed = Date.now() - this.demo.startAt;
+    const totalSteps = DEMO_STEPS.length;
+    const step = Math.floor(elapsed / DEMO_STEP_MS) % totalSteps;
+    const catsShown = Math.max(0, step - 1); // 第0步只讲区域，不放猫
+
+    r.text('通关演示', cx, 70, 40, C.text, 'center', 'middle', 'bold');
+
+    // 文字说明（分两行显示，避免过长）
+    const msg = DEMO_STEPS[step];
+    const cut = msg.length > 13 ? 13 : msg.length;
+    r.text(msg.slice(0, cut), cx, 128, 25, C.text, 'center', 'middle', 'bold');
+    if (msg.length > 13) r.text(msg.slice(13), cx, 160, 25, C.text, 'center', 'middle', 'bold');
+
+    // 演示棋盘
+    const cs = 118, gap = 10, n = DEMO_SIZE;
+    const inner = cs * n + gap * (n + 1);
+    const bx = (r.DW - inner) / 2, by = 210;
+    r.fillRoundRect(bx - 14, by - 14, inner + 28, inner + 28, 22, C.card);
+    const colorOf = {};
+    for (let i = 0; i < DEMO_REGION.length; i++) colorOf[DEMO_REGION[i]] = PALETTE[DEMO_REGION[i]];
+    for (let row = 0; row < n; row++) {
+      for (let col = 0; col < n; col++) {
+        const idx = row * n + col;
+        const x = bx + gap + col * (cs + gap);
+        const y = by + gap + row * (cs + gap);
+        r.fillRoundRect(x, y, cs, cs, 14, colorOf[DEMO_REGION[idx]]);
+        // 高亮第一步讲解的四个区域色块
+        if (step === 0) r.strokeRoundRect(x + 4, y + 4, cs - 8, cs - 8, 12, '#ffffff', 5);
+      }
+    }
+    // 逐只放猫
+    for (let rr = 0; rr < catsShown; rr++) {
+      const col = DEMO_SOLUTION[rr];
+      const x = bx + gap + col * (cs + gap);
+      const y = by + gap + rr * (cs + gap);
+      r.cat(x + cs / 2, y + cs / 2 + 3, cs * 0.68, C.text);
+    }
+    // 最后一步：通关庆祝
+    if (step === totalSteps - 1) {
+      r.text('★ 通 关 ★', cx, by + inner + 44, 34, C.orange, 'center', 'middle', 'bold');
+    }
+
+    // 底部按钮
+    const btnY = r.DH - 150;
+    const bw = 240, bh = 76;
+    r.fillRoundRect(cx - bw - 12, btnY, bw, bh, 38, C.lightBg);
+    r.text('重播', cx - bw / 2 - 12, btnY + bh / 2, 28, C.text, 'center', 'middle', 'bold');
+    r.addHit(cx - bw - 12, btnY, bw, bh, null, { onTap: () => { this.demo.startAt = Date.now(); } });
+    r.fillRoundRect(cx + 12, btnY, bw, bh, 38, C.coral);
+    r.text('返回', cx + bw / 2 + 12, btnY + bh / 2, 28, '#ffffff', 'center', 'middle', 'bold');
+    r.addHit(cx + 12, btnY, bw, bh, null, { onTap: () => { this.demo = null; } });
   }
 
   drawBottomBar() {
@@ -1528,6 +1611,7 @@ class Game {
   openSettings() {
     this.settings = {
       items: [
+        { label: '看通关演示', tap: () => this.startDemo() },
         { label: '选择关卡', tap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } },
         { label: '本关种子：' + seedCode(this.level, this.currentSeed) + '（同题挑战）', tap: () => this.inviteFriend() },
         { label: '换一题（随机新棋盘）', tap: () => this.rerollLevel() },

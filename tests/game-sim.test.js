@@ -666,5 +666,31 @@ check('排行榜分数一致：一律显示云端真实分数，不做本地兜�
   if (zero[0].score !== 0) throw new Error('云端0分不应被本地兜底');
 });
 
+check('通关演示：入口、逐步展示、通关文案与退出', function () {
+  g.demo = null;
+  g.openSettings();
+  const demoItem = g.settings.items.find(function (it) { return it.label === '看通关演示'; });
+  if (!demoItem) throw new Error('设置里没有“看通关演示”入口');
+  demoItem.tap();
+  if (!g.demo) throw new Error('点击后未启动演示');
+  // 第0步：区域说明
+  drawnTexts.length = 0;
+  g.demo.startAt = Date.now();
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s === '通关演示'; })) throw new Error('未绘制演示标题');
+  const step0 = drawnTexts.some(function (t) { return t.s.indexOf('4 种颜色') >= 0 || t.s.indexOf('区域要放') >= 0; });
+  if (!step0) throw new Error('未绘制第一步区域说明');
+  // 最后一步：通关文案
+  drawnTexts.length = 0;
+  g.demo.startAt = Date.now() - 1100 * 5;
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s.indexOf('通 关') >= 0; })) throw new Error('未绘制通关庆祝文案');
+  // 退出演示
+  g.demo = null;
+  drawnTexts.length = 0;
+  g.render();
+  if (drawnTexts.some(function (t) { return t.s === '通关演示'; })) throw new Error('退出后仍在演示画面');
+});
+
 g.stopTimer();
 console.log('\n通过：' + pass + ' / ' + total);
