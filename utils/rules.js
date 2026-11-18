@@ -4,19 +4,13 @@ const REASON_ROW = '同一行已经有一只小猫啦';
 const REASON_COL = '同一列已经有一只小猫啦';
 const REASON_REGION = '同一颜色里已经有一只小猫啦';
 const REASON_ADJ = '小猫不能相邻哦';
-const REASON_BLOCKED = '这个格子被挡住啦，不能放猫';
 
 function isAdjacent(a, b) {
   return Math.abs(a.row - b.row) <= 1 && Math.abs(a.col - b.col) <= 1;
 }
 
 // 返回无法放猫的原因，空字符串表示可以放
-// blocked 为禁放格子下标集合（障碍格与诱饵猫，可选，Set 或数组）
-function conflictReason(cats, target, blocked) {
-  if (blocked && target && target.idx !== undefined) {
-    const isBlocked = (typeof blocked.has === 'function') ? blocked.has(target.idx) : blocked.indexOf(target.idx) >= 0;
-    if (isBlocked) return REASON_BLOCKED;
-  }
+function conflictReason(cats, target) {
   for (let i = 0; i < cats.length; i++) {
     const c = cats[i];
     if (c === target) continue;
@@ -59,5 +53,4 @@ module.exports = {
   REASON_COL: REASON_COL,
   REASON_REGION: REASON_REGION,
   REASON_ADJ: REASON_ADJ,
-  REASON_BLOCKED: REASON_BLOCKED,
 };

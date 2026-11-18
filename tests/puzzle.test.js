@@ -263,30 +263,6 @@ check('checkSolved：错位解不算通关', function () {
   assert.strictEqual(rules.checkSolved(cats, 4), false);
 });
 
-check('诱饵猫领地：返回禁放集合、领地真实生效、解仍合法', function () {
-  const n = 9;
-  const gen = puzzle.generateWithFeatures(n, puzzle.rng(999), 6, 2);
-  assert.strictEqual(gen.blocked.length, 6, '障碍格数量错误');
-  assert.strictEqual(gen.decoy.length, 2, '诱饵猫数量错误');
-  assert.ok(gen.scent.length > 0, '诱饵猫应产生领地禁放格');
-  assert.strictEqual(new Set(gen.forbidden).size, gen.forbidden.length, '禁放集合不应重复');
-  assert.strictEqual(gen.forbidden.length, gen.blocked.length + gen.decoy.length + gen.scent.length);
-  gen.scent.forEach(function (idx) {
-    const r = Math.floor(idx / n), c = idx % n;
-    const near = gen.decoy.some(function (d) {
-      return Math.abs(r - Math.floor(d / n)) <= 1 && Math.abs(c - (d % n)) <= 1;
-    });
-    assert.ok(near, '领地格不在诱饵猫周围');
-  });
-  const solutionCells = {};
-  gen.cats.forEach(function (cat) { solutionCells[cat.row * n + cat.col] = true; });
-  gen.forbidden.forEach(function (idx) {
-    assert.ok(!solutionCells[idx], '禁放格压到了已知解');
-  });
-  const res = puzzle.countSolutions(n, gen.region, 1, null, gen.forbidden);
-  assert.ok(res.count >= 1, '带领地的谜题无解');
-});
-
 const total = Date.now() - started;
 console.log('通过用例：' + passed + ' / ' + (passed + failures.length));
 console.log('生成 ' + LEVELS + ' 关总耗时：' + total + 'ms，平均 ' + Math.round(total / LEVELS) + 'ms/关');

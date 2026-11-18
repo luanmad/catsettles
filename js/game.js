@@ -162,9 +162,9 @@ class Game {
     } catch (e) {}
   }
 
-  // 难度曲线：4x4→10x10 逐级解锁；16关起逐步引入限时星级、干扰格(诱饵猫)、障碍格
-  // 障碍格数量随关数大幅增加到 8-12，配合贪心选点实质压缩可用空间；不再送预置猫
-  // 返回 { size, blocked, decoy, starEnabled, star3, star2 }
+  // 难度曲线：4x4→10x10 逐级解锁；16关起启用限时星级
+  // 棋盘保持纯色块 + 猫，不设障碍/诱饵；难度由尺寸、1次提示、2条命和限时星级承担
+  // 返回 { size, starEnabled, star3, star2 }
   levelConfig(level) {
     let size;
     if (level <= 3) size = 4;
@@ -175,19 +175,12 @@ class Game {
     else if (level <= 30) size = 9;
     else size = 10;
 
-    // 新机制从 16 关起分阶段引入；干扰格是诱饵猫（不送完成数），障碍格大量增加
-    let blocked = 0, decoy = 0, starEnabled = false;
-    if (level >= 16) starEnabled = true;         // 16关起按用时评星
-    if (level >= 19) decoy = 1;                  // 19关起出现干扰格(诱饵猫)
-    if (level >= 22) blocked = 6;                // 22关起障碍格大幅出现
-    if (level >= 26) { decoy = 2; blocked = 8; }
-    if (level >= 34) { decoy = 2; blocked = 10; }
-    if (level >= 44) { decoy = 3; blocked = 12; }
+    const starEnabled = level >= 16;            // 16关起按用时评星
 
     // 星级时间阈值（秒）：棋盘越大越宽松；用时≤star3三星，≤star2二星，否则一星
     const star3 = Math.round(size * size * 1.6 + 10);
     const star2 = Math.round(star3 * 1.9);
-    return { size: size, blocked: blocked, decoy: decoy, starEnabled: starEnabled, star3: star3, star2: star2 };
+    return { size: size, starEnabled: starEnabled, star3: star3, star2: star2 };
   }
 
   levelSize(level) { return this.levelConfig(level).size; }
@@ -197,46 +190,24 @@ class Game {
     const cfg = this.levelConfig(level);
     const size = cfg.size;
     const rand = puzzle.rng(level * 1013904223 + 12345);
-    const gen = (cfg.blocked > 0 || cfg.decoy > 0)
-      ? puzzle.generateWithFeatures(size, rand, cfg.blocked, cfg.decoy)
-      : puzzle.generate(size, rand);
+    const gen = puzzle.generate(size, rand);
     const colorOf = puzzle.assignColors(gen.region, size, PALETTE);
     const symbols = puzzle.shuffle(SYMBOLS.slice(), rand);
-
-    // 障碍格：禁放且不可标记；诱饵猫：禁放、不计入完成数，且周围一圈也禁放（领地）
-    const blockedSet = {};
-    const blocked = gen.blocked || [];
-    for (let i = 0; i < blocked.length; i++) blockedSet[blocked[i]] = true;
-    const decoySet = {};
-    const decoy = gen.decoy || [];
-    for (let i = 0; i < decoy.length; i++) decoySet[decoy[i]] = true;
-    const scentSet = {};
-    const scent = gen.scent || [];
-    for (let i = 0; i < scent.length; i++) scentSet[scent[i]] = true;
-    // 规则与求解器统一拿到全部禁放格：障碍 + 诱饵猫 + 诱饵猫领地
-    const forbidden = gen.forbidden || blocked.concat(decoy, scent);
 
     const cells = [];
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         const idx = r * size + c;
         const reg = gen.region[idx];
-        let state = 'empty';
-        if (blockedSet[idx]) state = 'blocked';
-        else if (decoySet[idx]) state = 'decoy';
-        else if (scentSet[idx]) state = 'scent';
         cells.push({
           idx, row: r, col: c, region: reg,
           color: PALETTE[colorOf[reg]], symbol: symbols[reg],
-          state: state, auto: false,
+          state: 'empty', auto: false,
         });
       }
     }
     this.region = gen.region;
     this.cells = cells;
-    this.blockedSet = blockedSet;
-    this.decoySet = decoySet;
-    this.blockedList = forbidden; // 规则判定的禁放格 = 障碍 + 诱饵猫 + 领地
     this.levelConfigCur = cfg;
     this.level = level;
     this.size = size;
@@ -350,10 +321,6 @@ class Game {
     if (this.suppressTap) { this.suppressTap = false; return; }
     const cell = this.cells[idx];
     if (!cell) return;
-    if (cell.state === 'blocked') { this.showToast('这个格子被挡住啦'); return; }
-    if (cell.state === 'decoy') { this.showToast('这是诱饵猫，不能放猫'); return; }
-    if (cell.state === 'scent') { this.showToast('这里离诱饵猫太近啦'); return; }
-
     if (this.markMode) { this.toggleBan(idx); return; }
     if (cell.state === 'cat') {
       this.pushHistory();
@@ -373,7 +340,7 @@ class Game {
 
   toggleBan(idx) {
     const cell = this.cells[idx];
-    if (!cell || cell.state === 'blocked' || cell.state === 'decoy' || cell.state === 'scent') return;
+    if (!cell) return;
     this.pushHistory();
     if (cell.state === 'ban') {
       cell.state = 'empty'; cell.auto = false;
@@ -387,8 +354,8 @@ class Game {
 
   tryPlaceCat(idx) {
     const target = this.cells[idx];
-    if (!target || target.state === 'blocked' || target.state === 'decoy' || target.state === 'scent') return;
-    const reason = rules.conflictReason(this.currentCats(), target, this.blockedList || []);
+    if (!target) return;
+    const reason = rules.conflictReason(this.currentCats(), target, []);
     if (reason) { this.penalize(target, reason); return; }
     this.pushHistory();
     target.state = 'cat';
@@ -500,7 +467,7 @@ class Game {
     if (this.won || this.overlay) return;
     if (this.hintsLeft <= 0) { this.showToast('本关提示已用完'); return; }
     const cats = this.currentCats();
-    const hint = puzzle.nextHint(this.size, this.region, cats, this.blockedList || null);
+    const hint = puzzle.nextHint(this.size, this.region, cats);
     if (!hint) { this.showToast('当前摆法走不通，先撤掉几只小猫吧', 2000); return; }
     const idx = hint.row * this.size + hint.col;
     this.pushHistory();
@@ -522,9 +489,8 @@ class Game {
     if (!hasAny) return;
     this.pushHistory();
     for (let i = 0; i < this.cells.length; i++) {
-      const c = this.cells[i];
-      if (c.state === 'blocked' || c.state === 'decoy' || c.state === 'scent') continue;
-      c.state = 'empty'; c.auto = false;
+      this.cells[i].state = 'empty';
+      this.cells[i].auto = false;
     }
     this.catsPlaced = 0;
   }
@@ -532,7 +498,7 @@ class Game {
   // 拖拽批量标记：一次拖拽算一步历史，可一次撤销
   beginDragMark(idx) {
     const cell = this.cells[idx];
-    if (!cell || cell.state === 'blocked' || cell.state === 'decoy' || cell.state === 'scent') return false;
+    if (!cell) return false;
     const target = (cell.state === 'ban') ? 'empty' : 'ban';
     this.pushHistory();
     this.dragMark = { target: target, visited: {}, soundPlayed: false };
@@ -545,7 +511,7 @@ class Game {
     const d = this.dragMark;
     if (!d || d.visited[idx]) return;
     const cell = this.cells[idx];
-    if (!cell || cell.state === 'blocked' || cell.state === 'decoy' || cell.state === 'scent') return;
+    if (!cell) return;
     d.visited[idx] = true;
     if (d.target === 'ban') {
       if (cell.state === 'cat') this.catsPlaced -= 1;
@@ -815,7 +781,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。第16关起按用时评1-3星；后续关卡会出现深色障碍格（不能放猫），以及紫色带问号的诱饵猫——它和周围一圈格子都不能放真猫，也不计入完成数。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。第16关起按用时评1-3星。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -916,28 +882,13 @@ class Game {
       const x = bx + gap + cell.col * (cs + gap);
       const y = by + gap + cell.row * (cs + gap);
 
-      if (cell.state === 'blocked') {
-        // 障碍格：深色底 + 斜纹 + ✕ 标记，不能放猫
-        r.fillRoundRect(x, y, cs, cs, 10, '#5a6279');
-        r.fillRoundRect(x + cs * 0.18, y + cs * 0.18, cs * 0.64, cs * 0.64, 8, 'rgba(0,0,0,0.22)');
-        r.text('✕', x + cs / 2, y + cs / 2 + 1, L.cellFontSmall, '#ffffff', 'center', 'middle', 'bold');
-      } else {
-        r.fillRoundRect(x, y, cs, cs, 10, cell.color);
-        if (cell.state === 'cat') {
-          r.cat(x + cs / 2, y + cs / 2 + 2, cs * 0.72, cell.auto ? C.greenDeep : C.text);
-        } else if (cell.state === 'decoy') {
-          // 诱饵猫：长得像猫但不是真猫，禁放且不计入完成数
-          r.cat(x + cs / 2, y + cs / 2 + 2, cs * 0.72, '#7a5cff');
-          r.text('?', x + cs - 11, y + 13, Math.max(11, L.cellFontTiny * 0.9), '#7a5cff', 'center', 'middle', 'bold');
-        } else if (cell.state === 'scent') {
-          // 诱饵猫领地：淡紫光晕 + 小点，提示这里不能放真猫
-          r.fillRoundRect(x + cs * 0.1, y + cs * 0.1, cs * 0.8, cs * 0.8, 8, 'rgba(122,92,255,0.24)');
-          r.text('·', x + cs / 2, y + cs / 2, L.cellFontSmall, '#7a5cff', 'center', 'middle', 'bold');
-        } else if (cell.state === 'ban') {
-          this.drawCross(x + cs / 2, y + cs / 2 + 1, L.cellFontSmall, '#ffffff', cell.auto);
-        } else if (this.colorblind) {
-          r.textShadow(cell.symbol, x + cs / 2, y + cs / 2 + 1, L.cellFontTiny, '#ffffff', 'center', 'middle', 'rgba(0,0,0,0.35)', 3);
-        }
+      r.fillRoundRect(x, y, cs, cs, 10, cell.color);
+      if (cell.state === 'cat') {
+        r.cat(x + cs / 2, y + cs / 2 + 2, cs * 0.72, cell.auto ? C.greenDeep : C.text);
+      } else if (cell.state === 'ban') {
+        this.drawCross(x + cs / 2, y + cs / 2 + 1, L.cellFontSmall, '#ffffff', cell.auto);
+      } else if (this.colorblind) {
+        r.textShadow(cell.symbol, x + cs / 2, y + cs / 2 + 1, L.cellFontTiny, '#ffffff', 'center', 'middle', 'rgba(0,0,0,0.35)', 3);
       }
 
       r.addHit(x, y, cs, cs, null, { idx: i, longPress: true, onTap: () => this.onCellTap(i) });

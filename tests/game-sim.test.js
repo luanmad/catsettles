@@ -122,7 +122,7 @@ check('初始化布局与首帧渲染', function () {
   if (!g.layout) throw new Error('layout 未计算');
   if (g.size !== 4 || g.level !== 1) throw new Error('初始关卡错误');
 });
-check('难度曲线：尺寸递进到10x10、提示1次、生命2条、新机制按关引入', function () {
+check('难度曲线：尺寸递进到10x10、提示1次、生命2条、16关起评星', function () {
   const cases = [[1, 4], [3, 4], [4, 5], [12, 7], [13, 8], [15, 8], [16, 9], [30, 9], [31, 10], [60, 10]];
   cases.forEach(function (pair) {
     if (g.levelSize(pair[0]) !== pair[1]) {
@@ -140,13 +140,12 @@ check('难度曲线：尺寸递进到10x10、提示1次、生命2条、新机制
     }
     if (g.hintsLeft !== 1) throw new Error('第' + lv + '关提示应为1次');
   });
-  const c15 = g.levelConfig(15), c16 = g.levelConfig(16), c19 = g.levelConfig(19);
-  const c22 = g.levelConfig(22), c26 = g.levelConfig(26), c44 = g.levelConfig(44);
+  const c15 = g.levelConfig(15), c16 = g.levelConfig(16);
   if (c15.starEnabled) throw new Error('15关不应启用星级');
   if (!c16.starEnabled) throw new Error('16关应启用星级');
-  if (c16.decoy !== 0 || c19.decoy !== 1) throw new Error('诱饵猫引入关卡错误');
-  if (c19.blocked !== 0 || c22.blocked !== 6) throw new Error('障碍格引入关卡错误');
-  if (c26.blocked !== 8 || c44.blocked !== 12) throw new Error('障碍格未随关数大幅增加');
+  ['blocked', 'decoy', 'scent', 'forbidden'].forEach(function (k) {
+    if (k in c16) throw new Error('关卡配置不应含禁放机制字段: ' + k);
+  });
 });
 check('9x9关卡：颜色与符号覆盖全部9个区域，无越界', function () {
   g.loadLevel(16);
@@ -184,68 +183,32 @@ check('10x10关卡：谜题有解、10个区域颜色符号无越界无重复', 
     seen[colors[reg]] = true;
   }
 });
-check('障碍格与诱饵猫领地：数量正确、不可点击、不计数、不参与清除', function () {
+check('棋盘无禁放格：所有格子初始可放、可标记、清除后全部还原', function () {
   g.loadLevel(26);
-  const cfg = g.levelConfig(26);
-  const blocks = g.cells.filter(function (c) { return c.state === 'blocked'; });
-  const decoys = g.cells.filter(function (c) { return c.state === 'decoy'; });
-  const scents = g.cells.filter(function (c) { return c.state === 'scent'; });
-  if (blocks.length !== cfg.blocked) throw new Error('障碍格数量错误: ' + blocks.length);
-  if (decoys.length !== cfg.decoy) throw new Error('诱饵猫数量错误: ' + decoys.length);
-  if (!scents.length) throw new Error('诱饵猫应带有领地禁放格');
-  if (g.catsPlaced !== 0) throw new Error('诱饵猫不应计入已放数量');
-  scents.forEach(function (s) {
-    const near = decoys.some(function (d) {
-      return Math.abs(s.row - d.row) <= 1 && Math.abs(s.col - d.col) <= 1;
-    });
-    if (!near) throw new Error('领地格不在诱饵猫周围: ' + s.idx);
+  const bad = g.cells.filter(function (c) {
+    return c.state !== 'empty' || c.preset || c.color === '#5a6279';
   });
-  const bIdx = blocks[0].idx, dIdx = decoys[0].idx, sIdx = scents[0].idx;
-  g.onCellTap(bIdx); g.onCellTap(dIdx); g.onCellTap(sIdx);
-  if (g.cells[bIdx].state !== 'blocked' || g.cells[dIdx].state !== 'decoy' || g.cells[sIdx].state !== 'scent') {
-    throw new Error('禁放格被点击改变');
-  }
-  if (g.catsPlaced !== 0) throw new Error('点击禁放格后计数不应变化');
+  if (bad.length) throw new Error('存在禁放/预置格: ' + bad.length);
+  g.onCellTap(0);
+  if (g.cells[0].state !== 'cat' || g.catsPlaced !== 1) throw new Error('普通格应可放猫');
   g.markMode = true;
-  g.toggleBan(bIdx); g.toggleBan(dIdx); g.toggleBan(sIdx);
+  g.toggleBan(1);
   g.markMode = false;
-  if (g.beginDragMark(dIdx) !== false || g.beginDragMark(sIdx) !== false) {
-    throw new Error('拖拽不应从诱饵猫或领地格起手');
-  }
-  const empty = g.cells.find(function (c) { return c.state === 'empty'; });
-  g.onCellTap(empty.idx);
-  if (g.catsPlaced !== 1) throw new Error('普通格应可放猫');
+  if (g.cells[1].state !== 'ban') throw new Error('普通格应可标记');
   g.onClear();
-  if (g.cells[bIdx].state !== 'blocked' || g.cells[dIdx].state !== 'decoy' || g.cells[sIdx].state !== 'scent') {
-    throw new Error('清除后禁放格丢失');
+  if (g.cells[0].state !== 'empty' || g.cells[1].state !== 'empty' || g.catsPlaced !== 0) {
+    throw new Error('清除后未全部还原');
   }
-  if (g.catsPlaced !== 0) throw new Error('清除后计数错误');
   g.render();
 });
-check('16-60关：新机制关卡均有解且禁放格数量正确', function () {
+check('16-60关：纯棋盘均有解且无禁放状态', function () {
   const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
   for (let lv = 16; lv <= 60; lv++) {
     g.loadLevel(lv);
-    const cfg = g.levelConfig(lv);
-    const blocks = g.cells.filter(function (c) { return c.state === 'blocked'; }).length;
-    const decoys = g.cells.filter(function (c) { return c.state === 'decoy'; }).length;
-    const scents = g.cells.filter(function (c) { return c.state === 'scent'; }).length;
-    if (blocks !== cfg.blocked || decoys !== cfg.decoy) {
-      throw new Error('第' + lv + '关禁放格数量错误: ' + blocks + '/' + decoys);
-    }
-    if (!g.blockedList || g.blockedList.length !== blocks + decoys + scents) {
-      throw new Error('第' + lv + '关规则禁放格未包含诱饵猫领地');
-    }
-    const res = puzzleLib.countSolutions(g.size, g.region, 1, null, g.blockedList);
+    const bad = g.cells.filter(function (c) { return c.state !== 'empty'; }).length;
+    if (bad) throw new Error('第' + lv + '关存在非空格子: ' + bad);
+    const res = puzzleLib.countSolutions(g.size, g.region, 1);
     if (!res.count) throw new Error('第' + lv + '关无解');
-    const solution = res.solutions[0];
-    for (let r = 0; r < g.size; r++) {
-      const idx = r * g.size + solution[r];
-      const state = g.cells[idx].state;
-      if (state === 'blocked' || state === 'decoy' || state === 'scent') {
-        throw new Error('第' + lv + '关解落在禁放格上');
-      }
-    }
   }
 });
 check('星级评定：16关起按用时评1-3星并存档', function () {
