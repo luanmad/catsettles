@@ -635,5 +635,18 @@ check('主界面显示得分：图标+数值、无文字标签、大数字自适
   }
 });
 
+check('排行榜得分兜底：云端为0时本人用本地存档分数', function () {
+  g.loadLevel(12, 222);
+  g.totalScore = 8888;
+  g.bestScores = { 12: 640 };
+  const list = g.buildRankList([
+    { rank: 1, nickname: '我', maxLevel: 12, score: 0, lastScore: 0, total: 100, time: 50, isMe: true },
+    { rank: 2, nickname: '别人', maxLevel: 11, score: 7000, lastScore: 500, total: 200, time: 60, isMe: false },
+  ]);
+  if (list[0].score !== 8888) throw new Error('本人总得分未用本地兜底: ' + list[0].score);
+  if (list[0].lastScore !== 640) throw new Error('本人本关得分未用本地兜底: ' + list[0].lastScore);
+  if (list[1].score !== 7000) throw new Error('他人得分不应被本地覆盖');
+});
+
 g.stopTimer();
 console.log('\n通过：' + pass + ' / ' + total);

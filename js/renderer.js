@@ -351,6 +351,47 @@ class Renderer {
     c.restore();
   }
 
+  // 五角星图标：表示本关得分
+  star(cx, cy, s, color) {
+    const c = this.ctx;
+    const R = s / 2, r = R * 0.45;
+    c.save();
+    c.translate(cx, cy);
+    c.fillStyle = color;
+    c.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const ang = -Math.PI / 2 + i * Math.PI / 5;
+      const rad = (i % 2 === 0) ? R : r;
+      const px = Math.cos(ang) * rad, py = Math.sin(ang) * rad;
+      if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+    }
+    c.closePath();
+    c.fill();
+    c.restore();
+  }
+
+  // 金币图标：表示累计总得分
+  coin(cx, cy, s, color) {
+    const c = this.ctx;
+    const R = s / 2;
+    c.save();
+    c.translate(cx, cy);
+    c.fillStyle = color;
+    c.beginPath();
+    c.arc(0, 0, R, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = C_PAGE_BG;
+    c.beginPath();
+    c.arc(0, 0, R * 0.72, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = color;
+    c.font = 'bold ' + Math.round(R * 1.05) + 'px sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('¥', 0, 1);
+    c.restore();
+  }
+
   // 奖章图标：表示本关得分（与 trophy 的总得分区分）
   medal(cx, cy, s, color) {
     const c = this.ctx;

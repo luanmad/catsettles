@@ -332,25 +332,36 @@ class Game {
   }
 
   /* ---------------- 排行榜 ---------------- */
+  // 把云端榜单映射为展示数据；云端旧记录/未部署新云函数时 score 为 0，本人用本地存档兜底
+  buildRankList(top) {
+    const self = this;
+    return (top || []).map(function (r) {
+      const mine = !!r.isMe;
+      const score = r.score || (mine ? (self.totalScore || 0) : 0);
+      const lastScore = r.lastScore || (mine ? ((self.bestScores && self.bestScores[self.level]) || 0) : 0);
+      return {
+        rank: r.rank, nickname: r.nickname, maxLevel: r.maxLevel,
+        score: score, lastScore: lastScore,
+        totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: mine,
+      };
+    });
+  }
+
   refreshRank() {
     const self = this;
     rankService.fetchRanking().then(function (res) {
       self.rankReady = true;
       self.meInfo = res.me || null;
       self.myRankText = res.me ? ('第' + res.me.rank + '名') : '未上榜';
-      self.rankList = (res.top || []).map(function (r) {
-        return {
-          rank: r.rank, nickname: r.nickname, maxLevel: r.maxLevel,
-          score: r.score || 0, lastScore: r.lastScore || 0,
-          totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: !!r.isMe,
-        };
-      });
-      // 兼容旧记录：我的成绩有本关用时但缺总用时，用本地数据补报一次（只尝试一次，避免死循环）
-      if (res.me && res.me.time > 0 && (!res.me.total || res.me.total <= 0) && !self.rankFixTried) {
+      self.rankList = self.buildRankList(res.top);
+      // 兼容旧记录：云端缺总用时或得分时用本地数据补报一次（只尝试一次，避免死循环）
+      const needFix = res.me && ((res.me.time > 0 && (!res.me.total || res.me.total <= 0)) || (!(res.me.score > 0) && self.totalScore > 0));
+      if (needFix && !self.rankFixTried) {
         self.rankFixTried = true;
-        const localTotal = self.totalTime();
-        if (localTotal > 0) {
-          rankService.submitScore(self.maxLevel, localTotal, res.me.time, self.nickname)
+        const localTotal = self.totalTime() || res.me.total || 0;
+        const localLast = (self.bestScores && self.bestScores[self.level]) || 0;
+        if (localTotal > 0 || self.totalScore > 0) {
+          rankService.submitScore(self.maxLevel, localTotal, res.me.time, self.nickname, self.totalScore, localLast)
             .then(function () { self.refreshRank(); })
             .catch(function () {});
         }
@@ -1019,8 +1030,8 @@ class Game {
     ];
     if (this.combo >= 2) pills.push({ icon: 'combo', text: String(this.combo) });
     // 本关得分 + 总得分（排名已上移到爱心行），均只显示图标 + 数值
-    pills.push({ icon: 'medal', text: String(this.currentScore()) });
-    pills.push({ icon: 'trophy', text: String(this.totalScore || 0) });
+    pills.push({ icon: 'star', text: String(this.currentScore()) });
+    pills.push({ icon: 'coin', text: String(this.totalScore || 0) });
 
     const pw = (L.W - L.pad * 2 - gap * (pills.length - 1)) / pills.length;
     const iconW = 50;
@@ -1032,7 +1043,8 @@ class Game {
       const ix = x + 30;
       if (pills[i].icon === 'cat') r.cat(ix, cy, 32, C.coral);
       else if (pills[i].icon === 'clock') r.clock(ix, cy, 32, C.text);
-      else if (pills[i].icon === 'medal') r.medal(ix, cy, 32, C.orange);
+      else if (pills[i].icon === 'star') r.star(ix, cy, 32, '#f5b942');
+      else if (pills[i].icon === 'coin') r.coin(ix, cy, 32, '#f5b942');
       else if (pills[i].icon === 'combo') r.text('×', ix, cy, 38, C.orange, 'center', 'middle', 'bold');
       else if (pills[i].icon === 'trophy') r.trophy(ix, cy, 32, C.orange);
       // 数值字号按字符宽度自适应，确保大数字不被胶囊遮挡
