@@ -649,17 +649,21 @@ check('通关弹窗得分主视觉：显示本关得分与新高分徽章', func
   const fallback = drawnTexts.some(function (t) { return t.s.indexOf('最高 ') === 0; });
   if (!badge && !fallback) throw new Error('未绘制新高分徽章或最高分');
 });
-check('排行榜得分兜底：云端为0时本人用本地存档分数', function () {
+check('排行榜分数一致：一律显示云端真实分数，不做本地兜底', function () {
   g.loadLevel(12, 222);
-  g.totalScore = 8888;
+  g.totalScore = 8888; // 本地分很高，但榜单不应据此改动显示
   g.bestScores = { 12: 640 };
   const list = g.buildRankList([
-    { rank: 1, nickname: '我', maxLevel: 12, score: 0, lastScore: 0, total: 100, time: 50, isMe: true },
+    { rank: 1, nickname: '我', maxLevel: 12, score: 1200, lastScore: 300, total: 100, time: 50, isMe: true },
     { rank: 2, nickname: '别人', maxLevel: 11, score: 7000, lastScore: 500, total: 200, time: 60, isMe: false },
   ]);
-  if (list[0].score !== 8888) throw new Error('本人总得分未用本地兜底: ' + list[0].score);
-  if (list[0].lastScore !== 640) throw new Error('本人本关得分未用本地兜底: ' + list[0].lastScore);
-  if (list[1].score !== 7000) throw new Error('他人得分不应被本地覆盖');
+  // 本人也必须用云端分数，所有用户看到同一份榜单
+  if (list[0].score !== 1200) throw new Error('本人分数被本地覆盖: ' + list[0].score);
+  if (list[0].lastScore !== 300) throw new Error('本人本关分数被本地覆盖: ' + list[0].lastScore);
+  if (list[1].score !== 7000) throw new Error('他人分数错误');
+  // 云端为0的旧记录也照实显示，不补本地分
+  const zero = g.buildRankList([{ rank: 1, nickname: '我', maxLevel: 12, score: 0, lastScore: 0, total: 0, time: 0, isMe: true }]);
+  if (zero[0].score !== 0) throw new Error('云端0分不应被本地兜底');
 });
 
 g.stopTimer();

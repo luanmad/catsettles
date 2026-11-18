@@ -332,17 +332,14 @@ class Game {
   }
 
   /* ---------------- 排行榜 ---------------- */
-  // 把云端榜单映射为展示数据；云端旧记录/未部署新云函数时 score 为 0，本人用本地存档兜底
+  // 把云端榜单映射为展示数据：所有人一律显示云端真实分数，不做本地兜底，
+  // 否则每个用户只看到自己的本地分，导致不同设备榜单不一致。
   buildRankList(top) {
-    const self = this;
     return (top || []).map(function (r) {
-      const mine = !!r.isMe;
-      const score = r.score || (mine ? (self.totalScore || 0) : 0);
-      const lastScore = r.lastScore || (mine ? ((self.bestScores && self.bestScores[self.level]) || 0) : 0);
       return {
         rank: r.rank, nickname: r.nickname, maxLevel: r.maxLevel,
-        score: score, lastScore: lastScore,
-        totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: mine,
+        score: r.score || 0, lastScore: r.lastScore || 0,
+        totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: !!r.isMe,
       };
     });
   }
@@ -354,14 +351,19 @@ class Game {
       self.meInfo = res.me || null;
       self.myRankText = res.me ? ('第' + res.me.rank + '名') : '未上榜';
       self.rankList = self.buildRankList(res.top);
-      // 兼容旧记录：云端缺总用时或得分时用本地数据补报一次（只尝试一次，避免死循环）
-      const needFix = res.me && ((res.me.time > 0 && (!res.me.total || res.me.total <= 0)) || (!(res.me.score > 0) && self.totalScore > 0));
-      if (needFix && !self.rankFixTried) {
-        self.rankFixTried = true;
+      // 云端分数低于本地真实分数时自动补报，保证云端数据最终与本地一致（所有用户看到同一份榜单）。
+      // 用固定 key 限流：同一轮只补报一次，避免死循环；下次进入榜单可再次同步。
+      const localScore = self.totalScore || 0;
+      const cloudScore = res.me ? (res.me.score || 0) : 0;
+      const missingTotal = res.me && res.me.time > 0 && (!res.me.total || res.me.total <= 0);
+      const needFix = res.me && (localScore > cloudScore || missingTotal);
+      const fixKey = self.level + ':' + localScore + ':' + cloudScore;
+      if (needFix && self.rankFixKey !== fixKey) {
+        self.rankFixKey = fixKey;
         const localTotal = self.totalTime() || res.me.total || 0;
         const localLast = (self.bestScores && self.bestScores[self.level]) || 0;
-        if (localTotal > 0 || self.totalScore > 0) {
-          rankService.submitScore(self.maxLevel, localTotal, res.me.time, self.nickname, self.totalScore, localLast)
+        if (localTotal > 0 || localScore > 0) {
+          rankService.submitScore(self.maxLevel, localTotal, res.me.time || self.totalTime(), self.nickname, localScore, localLast)
             .then(function () { self.refreshRank(); })
             .catch(function () {});
         }
