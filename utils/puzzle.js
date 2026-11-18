@@ -172,7 +172,7 @@ function countSolutions(n, region, limit, fixed, blocked) {
     }
   }
 
-  // 校验并登记预置猫：落在障碍格、同列、同区域或与上一行相邻则无解
+  // 校验并登记固定猫：落在禁放格、同列、同区域或与上一行相邻则无解
   for (let r = 0; r < n; r++) {
     if (fixedCol[r] < 0) continue;
     const c = fixedCol[r];
@@ -199,7 +199,7 @@ function countSolutions(n, region, limit, fixed, blocked) {
       const reg = region[idx];
       if (reg === undefined || reg < 0 || usedRegions[reg]) continue;
       if (r > 0 && Math.abs(cols[r - 1] - c) <= 1) continue;
-      // 下一行为预置猫时也要满足不相邻（含斜角）
+      // 下一行为固定猫时也要满足不相邻（含斜角）
       if (r < n - 1 && fixedCol[r + 1] >= 0 && Math.abs(fixedCol[r + 1] - c) <= 1) continue;
       usedCols[c] = true;
       usedRegions[reg] = true;
@@ -261,18 +261,40 @@ function generate(n, rand, options) {
   return { cats: cats, region: generateRegions(n, cats, rand), unique: false, count: 0 };
 }
 
-// 生成带"障碍格/预置猫"的谜题：从一个已知解出发，
-// 障碍格只选非解格子，预置猫取自该解，因此解一定存在。
-// 参数 blockedCount=障碍格数量，presetCount=预置猫数量。
-// 返回 { cats, region, blocked, preset, count, unique }，preset 为 {row,col,region} 数组。
-function generateWithFeatures(n, rand, blockedCount, presetCount, options) {
+// 从候选格中贪心挑选禁放格：每次选"加入后能让解数最少"的格子，尽量压缩解空间。
+// 候选格都来自某个已知解之外，所以解一定存在。
+function pickForbidden(n, region, candidates, count, rand) {
+  const chosen = [];
+  const pool = candidates.slice();
+  const sampleLimit = 14; // 每步评估的候选样本数，平衡效果与耗时
+  while (chosen.length < count && pool.length) {
+    const sample = shuffle(pool.slice(), rand).slice(0, sampleLimit);
+    let bestCell = null, bestCount = Infinity;
+    for (let i = 0; i < sample.length; i++) {
+      const cell = sample[i];
+      const c = countSolutions(n, region, 6, null, chosen.concat([cell])).count;
+      if (c > 0 && c < bestCount) { bestCount = c; bestCell = cell; }
+    }
+    if (bestCell === null) break;
+    chosen.push(bestCell);
+    pool.splice(pool.indexOf(bestCell), 1);
+  }
+  return chosen;
+}
+
+// 生成带"障碍格 / 干扰格(诱饵猫)"的谜题（不再送预置猫）。
+// 障碍格与干扰格都从已知解之外选取，故解一定存在；障碍格用贪心挑选以压缩解空间。
+// 干扰格在画面上显示为"假猫"，不能放真猫、也不计入完成数，起到干扰作用。
+// 返回 { cats, region, blocked, decoy, count, unique }
+// blocked/decoy 均为格子下标数组。
+function generateWithFeatures(n, rand, blockedCount, decoyCount, options) {
   const opts = options || {};
   const maxCats = opts.maxCatsAttempts || 6;
   const maxRegions = opts.maxRegionAttempts || 3;
   let best = null;
 
   const wantedBlocked = Math.max(0, Math.min(blockedCount || 0, n * n - n));
-  const wantedPreset = Math.max(0, Math.min(presetCount || 0, n - 1));
+  const wantedDecoy = Math.max(0, Math.min(decoyCount || 0, n * n - n - wantedBlocked));
 
   for (let a = 0; a < maxCats; a++) {
     const cats = generateCats(n, rand);
@@ -280,27 +302,24 @@ function generateWithFeatures(n, rand, blockedCount, presetCount, options) {
     for (let b = 0; b < maxRegions; b++) {
       const region = generateRegions(n, cats, rand);
 
-      // 候选障碍格：所有非解格子
+      // 非解格子作为禁放候选
       const solutionCells = {};
       for (let i = 0; i < n; i++) solutionCells[cats[i].row * n + cats[i].col] = true;
       const candidates = [];
       for (let idx = 0; idx < n * n; idx++) if (!solutionCells[idx]) candidates.push(idx);
       shuffle(candidates, rand);
-      const blocked = candidates.slice(0, wantedBlocked);
 
-      // 预置猫：从解里随机取若干只
-      const picked = shuffle(cats.slice(), rand).slice(0, wantedPreset);
-      const preset = picked.map(function (c) {
-        return { row: c.row, col: c.col, region: region[c.row * n + c.col] };
-      });
-      const fixedCols = picked.map(function (c) { return { row: c.row, col: c.col }; });
+      // 先贪心选障碍格，再从中剩余里选干扰格（合计不超过非解格数）
+      const blocked = pickForbidden(n, region, candidates, wantedBlocked, rand);
+      const rest = candidates.filter(function (idx) { return blocked.indexOf(idx) < 0; });
+      const decoy = rest.slice(0, wantedDecoy);
+      const forbidden = blocked.concat(decoy);
 
-      const res = countSolutions(n, region, 2, fixedCols, blocked);
+      const res = countSolutions(n, region, 2, null, forbidden);
       const candidate = {
-        cats: cats, region: region, blocked: blocked, preset: preset,
+        cats: cats, region: region, blocked: blocked, decoy: decoy,
         count: res.count, unique: res.count === 1,
       };
-      // 优先：有解 + 唯一解 + 障碍/预置数量满足要求
       if (res.count >= 1 && res.unique) return candidate;
       if (res.count >= 1 && (!best || (best.count !== 1 && res.count < best.count))) best = candidate;
       if (res.count === 0 && !best) best = candidate;
@@ -308,11 +327,11 @@ function generateWithFeatures(n, rand, blockedCount, presetCount, options) {
   }
   if (best && best.count >= 1) return best;
 
-  // 兜底：无障碍无预置的普通谜题
+  // 兜底：无障碍无干扰的普通谜题
   const cats = generateCats(n, rand);
   const region = generateRegions(n, cats, rand);
   const res = countSolutions(n, region, 2);
-  return { cats: cats, region: region, blocked: [], preset: [], count: res.count, unique: res.count === 1 };
+  return { cats: cats, region: region, blocked: [], decoy: [], count: res.count, unique: res.count === 1 };
 }
 
 // 区域着色：优先保证每个区域颜色唯一（玩家按颜色识别区域），调色板不够时才退化为相邻不同色

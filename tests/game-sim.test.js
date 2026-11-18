@@ -135,11 +135,13 @@ check('难度曲线：尺寸递进到10x10、提示分档、新机制按关引�
   [14, 21, 60].forEach(function (lv) {
     if (g.hintQuota(lv) !== 2) throw new Error('第' + lv + '关提示应为2次');
   });
-  const c15 = g.levelConfig(15), c16 = g.levelConfig(16), c19 = g.levelConfig(19), c22 = g.levelConfig(22);
+  const c15 = g.levelConfig(15), c16 = g.levelConfig(16), c19 = g.levelConfig(19);
+  const c22 = g.levelConfig(22), c26 = g.levelConfig(26), c44 = g.levelConfig(44);
   if (c15.starEnabled) throw new Error('15关不应启用星级');
   if (!c16.starEnabled) throw new Error('16关应启用星级');
-  if (c16.preset !== 0 || c19.preset !== 1) throw new Error('预置猫引入关卡错误');
-  if (c19.blocked !== 0 || c22.blocked !== 1) throw new Error('障碍格引入关卡错误');
+  if (c16.decoy !== 0 || c19.decoy !== 1) throw new Error('诱饵猫引入关卡错误');
+  if (c19.blocked !== 0 || c22.blocked !== 6) throw new Error('障碍格引入关卡错误');
+  if (c26.blocked !== 8 || c44.blocked !== 12) throw new Error('障碍格未随关数大幅增加');
 });
 check('9x9关卡：颜色与符号覆盖全部9个区域，无越界', function () {
   g.loadLevel(16);
@@ -177,25 +179,55 @@ check('10x10关卡：谜题有解、10个区域颜色符号无越界无重复', 
     seen[colors[reg]] = true;
   }
 });
-check('障碍格与预置猫：数量正确、不可点击、不参与清除', function () {
+check('障碍格与诱饵猫：数量正确、不可点击、不计数、不参与清除', function () {
   g.loadLevel(26);
   const cfg = g.levelConfig(26);
   const blocks = g.cells.filter(function (c) { return c.state === 'blocked'; });
-  const presets = g.cells.filter(function (c) { return c.preset && c.state === 'cat'; });
+  const decoys = g.cells.filter(function (c) { return c.state === 'decoy'; });
   if (blocks.length !== cfg.blocked) throw new Error('障碍格数量错误: ' + blocks.length);
-  if (presets.length !== cfg.preset) throw new Error('预置猫数量错误: ' + presets.length);
-  if (g.catsPlaced !== cfg.preset) throw new Error('预置猫未计入已放数量');
-  // 点击障碍格/预置猫不改变状态
-  const bIdx = blocks[0].idx, pIdx = presets[0].idx;
-  g.onCellTap(bIdx); g.onCellTap(pIdx);
+  if (decoys.length !== cfg.decoy) throw new Error('诱饵猫数量错误: ' + decoys.length);
+  if (g.catsPlaced !== 0) throw new Error('诱饵猫不应计入已放数量');
+  const bIdx = blocks[0].idx, dIdx = decoys[0].idx;
+  g.onCellTap(bIdx); g.onCellTap(dIdx);
   if (g.cells[bIdx].state !== 'blocked') throw new Error('障碍格被点击改变');
-  if (g.cells[pIdx].state !== 'cat') throw new Error('预置猫被点击移除');
-  // 清除后预置猫和障碍格仍在
+  if (g.cells[dIdx].state !== 'decoy') throw new Error('诱饵猫被点击改变');
+  if (g.catsPlaced !== 0) throw new Error('点击诱饵猫后计数不应变化');
+  g.markMode = true;
+  g.toggleBan(bIdx); g.toggleBan(dIdx);
+  g.markMode = false;
+  if (g.cells[bIdx].state !== 'blocked' || g.cells[dIdx].state !== 'decoy') throw new Error('标记模式改变了禁放格');
+  if (g.beginDragMark(dIdx) !== false) throw new Error('拖拽不应从诱饵猫起手');
+  const empty = g.cells.find(function (c) { return c.state === 'empty'; });
+  g.onCellTap(empty.idx);
+  if (g.catsPlaced !== 1) throw new Error('普通格应可放猫');
   g.onClear();
-  if (g.cells[bIdx].state !== 'blocked') throw new Error('清除后障碍格丢失');
-  if (g.cells[pIdx].state !== 'cat') throw new Error('清除后预置猫丢失');
-  if (g.catsPlaced !== cfg.preset) throw new Error('清除后预置猫计数错误');
+  if (g.cells[bIdx].state !== 'blocked' || g.cells[dIdx].state !== 'decoy') throw new Error('清除后禁放格丢失');
+  if (g.catsPlaced !== 0) throw new Error('清除后计数错误');
   g.render();
+});
+check('16-60关：新机制关卡均有解且禁放格数量正确', function () {
+  const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
+  for (let lv = 16; lv <= 60; lv++) {
+    g.loadLevel(lv);
+    const cfg = g.levelConfig(lv);
+    const blocks = g.cells.filter(function (c) { return c.state === 'blocked'; }).length;
+    const decoys = g.cells.filter(function (c) { return c.state === 'decoy'; }).length;
+    if (blocks !== cfg.blocked || decoys !== cfg.decoy) {
+      throw new Error('第' + lv + '关禁放格数量错误: ' + blocks + '/' + decoys);
+    }
+    if (!g.blockedList || g.blockedList.length !== blocks + decoys) {
+      throw new Error('第' + lv + '关规则禁放格未包含诱饵猫');
+    }
+    const res = puzzleLib.countSolutions(g.size, g.region, 1, null, g.blockedList);
+    if (!res.count) throw new Error('第' + lv + '关无解');
+    const solution = res.solutions[0];
+    for (let r = 0; r < g.size; r++) {
+      const idx = r * g.size + solution[r];
+      if (g.cells[idx].state === 'blocked' || g.cells[idx].state === 'decoy') {
+        throw new Error('第' + lv + '关解落在禁放格上');
+      }
+    }
+  }
 });
 check('星级评定：16关起按用时评1-3星并存档', function () {
   g.loadLevel(16);

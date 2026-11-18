@@ -11,7 +11,7 @@ function isAdjacent(a, b) {
 }
 
 // 返回无法放猫的原因，空字符串表示可以放
-// blocked 为障碍格子下标集合（可选，Set 或数组）
+// blocked 为禁放格子下标集合（障碍格与诱饵猫，可选，Set 或数组）
 function conflictReason(cats, target, blocked) {
   if (blocked && target && target.idx !== undefined) {
     const isBlocked = (typeof blocked.has === 'function') ? blocked.has(target.idx) : blocked.indexOf(target.idx) >= 0;
