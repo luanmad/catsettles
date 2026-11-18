@@ -66,6 +66,9 @@ class Game {
     this.soundOn = save.sound !== false;
     sound.setEnabled(this.soundOn);
 
+    // 启动页《健康游戏忠告》：每个安装首次进入显示一次，确认后写入存档不再重复
+    this.showHealthNotice = !save.healthNoticed;
+
     this.level = 1;
     this.size = 4;
     this.cells = [];
@@ -152,6 +155,7 @@ class Game {
         colorblind: this.colorblind,
         nickname: this.nickname,
         sound: this.soundOn,
+        healthNoticed: !this.showHealthNotice,
       });
     } catch (e) {}
   }
@@ -206,7 +210,7 @@ class Game {
     this.timerStart = Date.now();
     const self = this;
     this.timer = setInterval(function () {
-      if (self.won || self.overlay) return;
+      if (self.showHealthNotice || self.won || self.overlay) return;
       self.seconds = self.timerBase + Math.floor((Date.now() - self.timerStart) / 1000);
     }, 300);
   }
@@ -653,6 +657,7 @@ class Game {
     const r = this.r;
     r.begin();
     r.clear();
+    if (this.showHealthNotice) { this.drawHealthNotice(); return; }
     this.computeLayout();
     r.setFill(C.pageBg);
     r.fillRect(0, 0, r.DW, r.DH);
@@ -673,6 +678,44 @@ class Game {
     if (this.settings) this.drawSettings();
     if (this.toast && Date.now() < this.toast.until) this.drawToast();
     else this.toast = null;
+  }
+
+  // 启动页：健康游戏忠告（微信平台强制忠告之后、进入游戏之前显示）
+  drawHealthNotice() {
+    const r = this.r;
+    r.setFill(C.pageBg);
+    r.fillRect(0, 0, r.DW, r.DH);
+    const cx = r.DW / 2;
+    const top = (this.topInset || 0) + Math.max(90, r.DH * 0.12);
+    const cardW = r.DW - 120;
+    const cardX = (r.DW - cardW) / 2;
+
+    r.text('健康游戏忠告', cx, top + 40, 42, C.text, 'center', 'middle', 'bold');
+    r.fillRoundRect(cardX, top + 90, cardW, 360, 28, C.card);
+    const lines = [
+      '抵制不良游戏，拒绝盗版游戏。',
+      '注意自我保护，谨防受骗上当。',
+      '适度游戏益脑，沉迷游戏伤身。',
+      '合理安排时间，享受健康生活。',
+    ];
+    for (let i = 0; i < lines.length; i++) {
+      r.text(lines[i], cx, top + 160 + i * 76, 28, C.text, 'center', 'middle');
+    }
+    r.text('猫猫请落座', cx, top + 500, 24, C.subText, 'center', 'middle');
+
+    const btnW = 300, btnH = 88, btnY = top + 550;
+    r.fillRoundRect(cx - btnW / 2, btnY, btnW, btnH, 44, C.coral);
+    r.text('我已阅读并同意', cx, btnY + btnH / 2, 30, '#ffffff', 'center', 'middle', 'bold');
+    r.addHit(cx - btnW / 2, btnY, btnW, btnH, null, { onTap: () => this.dismissHealthNotice() });
+  }
+
+  dismissHealthNotice() {
+    if (!this.showHealthNotice) return;
+    this.showHealthNotice = false;
+    this.persist();
+    // 忠告页停留时间不计入本关用时，重新校准计时基准
+    this.timerBase = this.seconds;
+    this.timerStart = Date.now();
   }
 
   drawTopBar() {

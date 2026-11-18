@@ -52,6 +52,7 @@ global.wx = {
 };
 global.requestAnimationFrame = global.wx.requestAnimationFrame;
 
+storage.catwhere_save_v2 = { healthNoticed: true }; // 默认跳过健康忠告页，忠告页单独测试
 const Game = require(path.join(__dirname, '..', 'js', 'game.js'));
 const canvas = wx.createCanvas();
 const g = new Game(canvas);
@@ -94,6 +95,28 @@ function check(name, fn) {
 }
 
 console.log('小游戏运行模拟：');
+check('启动页：健康游戏忠告八句文案与进入按钮', function () {
+  g.showHealthNotice = true;
+  drawnTexts.length = 0;
+  g.render(); // 忠告页显示时不应计算棋盘布局
+  const joined = drawnTexts.map(function (t) { return t.s; }).join('|');
+  const lines = ['抵制不良游戏，拒绝盗版游戏。', '注意自我保护，谨防受骗上当。',
+    '适度游戏益脑，沉迷游戏伤身。', '合理安排时间，享受健康生活。'];
+  if (joined.indexOf('健康游戏忠告') < 0) throw new Error('缺少标题');
+  lines.forEach(function (line) {
+    if (joined.indexOf(line) < 0) throw new Error('缺少忠告文案: ' + line);
+  });
+  if (!drawnTexts.some(function (t) { return t.s === '我已阅读并同意'; })) throw new Error('缺少进入按钮');
+  // 点击按钮进入游戏，状态落盘不再重复显示
+  const btn = g.r.hitAreas.find(function (a) { return a.data && typeof a.data.onTap === 'function'; });
+  if (!btn) throw new Error('进入按钮未注册命中区');
+  btn.data.onTap();
+  if (g.showHealthNotice) throw new Error('点击后未关闭忠告页');
+  if (storage.catwhere_save_v2.healthNotified !== false && storage.catwhere_save_v2.healthNoticed !== true) {
+    throw new Error('未写入已确认状态');
+  }
+  g.showHealthNotice = false;
+});
 check('初始化布局与首帧渲染', function () {
   g.render();
   if (!g.layout) throw new Error('layout 未计算');
