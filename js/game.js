@@ -1250,7 +1250,7 @@ class Game {
     const meText = !this.rankReady ? '未启用' : (this.meInfo ? ('第' + this.meInfo.rank + '名') : '未上榜');
     // 排名规则说明：得分越高越靠前
     r.text('按 累计得分 排名，得分越高越靠前', p.px + 40, p.py + 76, 17, C.subText, 'left', 'middle');
-    r.text('得分 = 难度 + 用时 + 连击 + 完美 + 星级 - 取消 - 生命', p.px + 40, p.py + 98, 17, C.subText, 'left', 'middle');
+    r.text('得分 = 难度 + 用时 + 连击 + 完美 + 星级 - 撤消/消除 - 生命', p.px + 40, p.py + 98, 17, C.subText, 'left', 'middle');
     // 统一列坐标（表头与数据行共用，避免错位）
     const colLevel = p.px + 410;
     const colScore = p.px + 530;
