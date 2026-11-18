@@ -11,7 +11,7 @@ const SAVE_KEY = 'catwhere_save_v2';
 const TOTAL_LEVELS = 60;
 const PALETTE = ['#f4756b', '#6fd8c6', '#f78fb3', '#c9a7f5', '#ffd166', '#7fb3f5', '#f5a35c', '#9fd977', '#2e8b8b', '#a66a3f'];
 const SYMBOLS = ['●', '▲', '■', '★', '◆', '♥', '✚', '♠', '▼', '◇'];
-const MAX_HEARTS = 3;
+const MAX_HEARTS = 2;
 const CELL_GAP = 8;
 const MAX_HISTORY = 60;
 
@@ -75,7 +75,7 @@ class Game {
     this.cells = [];
     this.region = [];
     this.catsPlaced = 0;
-    this.hearts = [1, 1, 1];
+    this.hearts = [1, 1];
     this.heartShakeUntil = 0;
     this.markMode = false;
     this.hintsLeft = 1;
@@ -191,7 +191,7 @@ class Game {
   }
 
   levelSize(level) { return this.levelConfig(level).size; }
-  hintQuota(level) { return level <= 13 ? 1 : 2; }
+  hintQuota(level) { return 1; }
 
   loadLevel(level) {
     const cfg = this.levelConfig(level);
@@ -203,17 +203,18 @@ class Game {
     const colorOf = puzzle.assignColors(gen.region, size, PALETTE);
     const symbols = puzzle.shuffle(SYMBOLS.slice(), rand);
 
-    // 障碍格：禁放且不可标记；干扰格(诱饵猫)：禁放、不可移动、不计入完成数
+    // 障碍格：禁放且不可标记；诱饵猫：禁放、不计入完成数，且周围一圈也禁放（领地）
     const blockedSet = {};
     const blocked = gen.blocked || [];
     for (let i = 0; i < blocked.length; i++) blockedSet[blocked[i]] = true;
     const decoySet = {};
     const decoy = gen.decoy || [];
     for (let i = 0; i < decoy.length; i++) decoySet[decoy[i]] = true;
-    // 所有禁放格（障碍+干扰）都提供给规则与求解器
-    const forbidden = blocked.concat(decoy);
-    const forbiddenSet = {};
-    for (let i = 0; i < forbidden.length; i++) forbiddenSet[forbidden[i]] = true;
+    const scentSet = {};
+    const scent = gen.scent || [];
+    for (let i = 0; i < scent.length; i++) scentSet[scent[i]] = true;
+    // 规则与求解器统一拿到全部禁放格：障碍 + 诱饵猫 + 诱饵猫领地
+    const forbidden = gen.forbidden || blocked.concat(decoy, scent);
 
     const cells = [];
     for (let r = 0; r < size; r++) {
@@ -223,6 +224,7 @@ class Game {
         let state = 'empty';
         if (blockedSet[idx]) state = 'blocked';
         else if (decoySet[idx]) state = 'decoy';
+        else if (scentSet[idx]) state = 'scent';
         cells.push({
           idx, row: r, col: c, region: reg,
           color: PALETTE[colorOf[reg]], symbol: symbols[reg],
@@ -234,7 +236,7 @@ class Game {
     this.cells = cells;
     this.blockedSet = blockedSet;
     this.decoySet = decoySet;
-    this.blockedList = forbidden; // 规则判定的禁放格 = 障碍 + 干扰
+    this.blockedList = forbidden; // 规则判定的禁放格 = 障碍 + 诱饵猫 + 领地
     this.levelConfigCur = cfg;
     this.level = level;
     this.size = size;
@@ -350,6 +352,7 @@ class Game {
     if (!cell) return;
     if (cell.state === 'blocked') { this.showToast('这个格子被挡住啦'); return; }
     if (cell.state === 'decoy') { this.showToast('这是诱饵猫，不能放猫'); return; }
+    if (cell.state === 'scent') { this.showToast('这里离诱饵猫太近啦'); return; }
 
     if (this.markMode) { this.toggleBan(idx); return; }
     if (cell.state === 'cat') {
@@ -370,7 +373,7 @@ class Game {
 
   toggleBan(idx) {
     const cell = this.cells[idx];
-    if (!cell || cell.state === 'blocked' || cell.state === 'decoy') return;
+    if (!cell || cell.state === 'blocked' || cell.state === 'decoy' || cell.state === 'scent') return;
     this.pushHistory();
     if (cell.state === 'ban') {
       cell.state = 'empty'; cell.auto = false;
@@ -384,7 +387,7 @@ class Game {
 
   tryPlaceCat(idx) {
     const target = this.cells[idx];
-    if (!target || target.state === 'blocked' || target.state === 'decoy') return;
+    if (!target || target.state === 'blocked' || target.state === 'decoy' || target.state === 'scent') return;
     const reason = rules.conflictReason(this.currentCats(), target, this.blockedList || []);
     if (reason) { this.penalize(target, reason); return; }
     this.pushHistory();
@@ -520,7 +523,7 @@ class Game {
     this.pushHistory();
     for (let i = 0; i < this.cells.length; i++) {
       const c = this.cells[i];
-      if (c.state === 'blocked' || c.state === 'decoy') continue;
+      if (c.state === 'blocked' || c.state === 'decoy' || c.state === 'scent') continue;
       c.state = 'empty'; c.auto = false;
     }
     this.catsPlaced = 0;
@@ -529,7 +532,7 @@ class Game {
   // 拖拽批量标记：一次拖拽算一步历史，可一次撤销
   beginDragMark(idx) {
     const cell = this.cells[idx];
-    if (!cell || cell.state === 'blocked' || cell.state === 'decoy') return false;
+    if (!cell || cell.state === 'blocked' || cell.state === 'decoy' || cell.state === 'scent') return false;
     const target = (cell.state === 'ban') ? 'empty' : 'ban';
     this.pushHistory();
     this.dragMark = { target: target, visited: {}, soundPlayed: false };
@@ -542,7 +545,7 @@ class Game {
     const d = this.dragMark;
     if (!d || d.visited[idx]) return;
     const cell = this.cells[idx];
-    if (!cell || cell.state === 'blocked' || cell.state === 'decoy') return;
+    if (!cell || cell.state === 'blocked' || cell.state === 'decoy' || cell.state === 'scent') return;
     d.visited[idx] = true;
     if (d.target === 'ban') {
       if (cell.state === 'cat') this.catsPlaced -= 1;
@@ -812,12 +815,12 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。放错会扣一颗爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。第16关起按用时评1-3星；后续关卡会出现紫色带问号的诱饵猫（看着像猫，但不能放真猫、也不计入完成数）和深色障碍格（不能放猫）。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。第16关起按用时评1-3星；后续关卡会出现深色障碍格（不能放猫），以及紫色带问号的诱饵猫——它和周围一圈格子都不能放真猫，也不计入完成数。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
     const shaking = Date.now() < this.heartShakeUntil;
-    const startX = L.W / 2 - 110;
+    const startX = L.W / 2 - 30 - 42 * (this.hearts.length - 1);
     for (let i = 0; i < this.hearts.length; i++) {
       let off = 0;
       if (shaking) off = Math.sin(Date.now() / 25 + i) * 8;
@@ -926,6 +929,10 @@ class Game {
           // 诱饵猫：长得像猫但不是真猫，禁放且不计入完成数
           r.cat(x + cs / 2, y + cs / 2 + 2, cs * 0.72, '#7a5cff');
           r.text('?', x + cs - 11, y + 13, Math.max(11, L.cellFontTiny * 0.9), '#7a5cff', 'center', 'middle', 'bold');
+        } else if (cell.state === 'scent') {
+          // 诱饵猫领地：淡紫光晕 + 小点，提示这里不能放真猫
+          r.fillRoundRect(x + cs * 0.1, y + cs * 0.1, cs * 0.8, cs * 0.8, 8, 'rgba(122,92,255,0.24)');
+          r.text('·', x + cs / 2, y + cs / 2, L.cellFontSmall, '#7a5cff', 'center', 'middle', 'bold');
         } else if (cell.state === 'ban') {
           this.drawCross(x + cs / 2, y + cs / 2 + 1, L.cellFontSmall, '#ffffff', cell.auto);
         } else if (this.colorblind) {

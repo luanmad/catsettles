@@ -282,11 +282,30 @@ function pickForbidden(n, region, candidates, count, rand) {
   return chosen;
 }
 
-// 生成带"障碍格 / 干扰格(诱饵猫)"的谜题（不再送预置猫）。
-// 障碍格与干扰格都从已知解之外选取，故解一定存在；障碍格用贪心挑选以压缩解空间。
-// 干扰格在画面上显示为"假猫"，不能放真猫、也不计入完成数，起到干扰作用。
-// 返回 { cats, region, blocked, decoy, count, unique }
-// blocked/decoy 均为格子下标数组。
+// 诱饵猫的 3x3 领地（含自身），越界的格子忽略
+function territoryCells(idx, n) {
+  const r = Math.floor(idx / n), c = idx % n;
+  const out = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const rr = r + dr, cc = c + dc;
+      if (rr >= 0 && rr < n && cc >= 0 && cc < n) out.push(rr * n + cc);
+    }
+  }
+  return out;
+}
+
+// 领地内是否含有已知解中的猫（含诱饵猫自身格）
+function territoryHitsSolution(idx, n, solutionCells) {
+  const cells = territoryCells(idx, n);
+  for (let i = 0; i < cells.length; i++) if (solutionCells[cells[i]]) return true;
+  return false;
+}
+
+// 生成带"障碍格 / 诱饵猫(带领地)"的谜题（不再送猫）。
+// 诱饵猫占据 3x3 领地：领地内所有格子都禁放真猫，是真实的规则约束而非纯视觉干扰。
+// 障碍格与诱饵猫都从已知解之外选取，且诱饵猫领地不含解猫，故解一定存在。
+// 返回 { cats, region, blocked, decoy, scent, forbidden, count, unique }
 function generateWithFeatures(n, rand, blockedCount, decoyCount, options) {
   const opts = options || {};
   const maxCats = opts.maxCatsAttempts || 6;
@@ -309,15 +328,42 @@ function generateWithFeatures(n, rand, blockedCount, decoyCount, options) {
       for (let idx = 0; idx < n * n; idx++) if (!solutionCells[idx]) candidates.push(idx);
       shuffle(candidates, rand);
 
-      // 先贪心选障碍格，再从中剩余里选干扰格（合计不超过非解格数）
+      // 先贪心选障碍格，再从中剩余里选诱饵猫（领地不能压到解猫）
       const blocked = pickForbidden(n, region, candidates, wantedBlocked, rand);
-      const rest = candidates.filter(function (idx) { return blocked.indexOf(idx) < 0; });
-      const decoy = rest.slice(0, wantedDecoy);
-      const forbidden = blocked.concat(decoy);
+      const blockedSet = {};
+      for (let i = 0; i < blocked.length; i++) blockedSet[blocked[i]] = true;
+      const decoyCandidates = [];
+      for (let i = 0; i < candidates.length; i++) {
+        const idx = candidates[i];
+        if (blockedSet[idx] || territoryHitsSolution(idx, n, solutionCells)) continue;
+        decoyCandidates.push(idx);
+      }
+      // 领地覆盖越多，实际压缩的解空间越大，优先选这类点
+      decoyCandidates.sort(function (a, b) {
+        return territoryCells(b, n).length - territoryCells(a, n).length;
+      });
+      const decoy = decoyCandidates.slice(0, wantedDecoy);
+      const decoySet = {};
+      for (let i = 0; i < decoy.length; i++) decoySet[decoy[i]] = true;
+
+      // 领地格：诱饵猫周围一圈（不含解猫、障碍格和诱饵猫自身）
+      const scent = [];
+      const scentSet = {};
+      for (let i = 0; i < decoy.length; i++) {
+        const cells = territoryCells(decoy[i], n);
+        for (let j = 0; j < cells.length; j++) {
+          const idx = cells[j];
+          if (solutionCells[idx] || blockedSet[idx] || decoySet[idx] || scentSet[idx]) continue;
+          scentSet[idx] = true;
+          scent.push(idx);
+        }
+      }
+      const forbidden = blocked.concat(decoy, scent);
 
       const res = countSolutions(n, region, 2, null, forbidden);
       const candidate = {
         cats: cats, region: region, blocked: blocked, decoy: decoy,
+        scent: scent, forbidden: forbidden,
         count: res.count, unique: res.count === 1,
       };
       if (res.count >= 1 && res.unique) return candidate;
@@ -331,7 +377,10 @@ function generateWithFeatures(n, rand, blockedCount, decoyCount, options) {
   const cats = generateCats(n, rand);
   const region = generateRegions(n, cats, rand);
   const res = countSolutions(n, region, 2);
-  return { cats: cats, region: region, blocked: [], decoy: [], count: res.count, unique: res.count === 1 };
+  return {
+    cats: cats, region: region, blocked: [], decoy: [], scent: [], forbidden: [],
+    count: res.count, unique: res.count === 1,
+  };
 }
 
 // 区域着色：优先保证每个区域颜色唯一（玩家按颜色识别区域），调色板不够时才退化为相邻不同色
