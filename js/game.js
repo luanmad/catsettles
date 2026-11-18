@@ -1380,7 +1380,7 @@ class Game {
     const showCombo = (ws.combo || 0) >= 2;
     const showScore = typeof ws.score === 'number';
     const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0)
-      + (showStars ? 62 : 0) + (showCombo ? 54 : 0) + (showScore ? 84 : 0);
+      + (showStars ? 62 : 0) + (showCombo ? 54 : 0) + (showScore ? 116 : 0);
     const y = Math.max(20, (r.DH - ch) / 2);
     const x = (r.DW - cw) / 2;
     r.fillRoundRect(x, y, cw, ch, 32, C.card);
@@ -1388,19 +1388,19 @@ class Game {
     r.text('第' + this.level + '关通过！', r.DW / 2, y + 180, 40, C.text, 'center', 'middle', 'bold');
     r.text(this.allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦',
       r.DW / 2, y + 222, 22, C.subText, 'center', 'middle');
-    const scoreShift = showScore ? 84 : 0;
+    const scoreShift = showScore ? 116 : 0;
     if (showScore) {
-      // 得分主视觉：金色高亮卡片 + 大号分数，新高分加描边光晕与徽章
-      const scW = cw - 120, scH = 76, scY = y + 252, scX = x + 60;
+      // 得分主视觉：金色高亮卡片 + 大号分数，标签与数值分行避免重叠
+      const scW = cw - 120, scH = 108, scY = y + 248, scX = x + 60;
       r.fillRoundRect(scX, scY, scW, scH, 20, '#fff7e6');
       if (ws.isNewScore) r.strokeRoundRect(scX + 2, scY + 2, scW - 4, scH - 4, 19, C.orange, 4);
-      r.text('本关得分', r.DW / 2, scY + 20, 19, C.subText, 'center', 'middle');
-      r.text(String(ws.score), r.DW / 2, scY + 52, 50, C.orange, 'center', 'middle', 'bold');
+      r.text('本关得分', r.DW / 2, scY + 26, 20, C.subText, 'center', 'middle');
+      r.text(String(ws.score), r.DW / 2, scY + 74, 60, C.orange, 'center', 'middle', 'bold');
       if (ws.isNewScore) {
-        r.fillRoundRect(scX + scW - 108, scY + 10, 96, 34, 17, C.orange);
-        r.text('新高分!', scX + scW - 60, scY + 27, 18, '#ffffff', 'center', 'middle', 'bold');
+        r.fillRoundRect(scX + scW - 108, scY + 12, 96, 34, 17, C.orange);
+        r.text('新高分!', scX + scW - 60, scY + 29, 18, '#ffffff', 'center', 'middle', 'bold');
       } else if (ws.bestScore) {
-        r.text('最高 ' + ws.bestScore, scX + scW - 16, scY + 22, 17, C.subText, 'right', 'middle');
+        r.text('最高 ' + ws.bestScore, scX + scW - 16, scY + 26, 18, C.subText, 'right', 'middle');
       }
     } else if (ws.solutions) {
       r.text('本关已发现 ' + ws.solutions + ' 种摆法', r.DW / 2, y + 252, 18, C.subText, 'center', 'middle');
