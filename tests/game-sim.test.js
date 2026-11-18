@@ -47,6 +47,7 @@ global.wx = {
   onHide: function (cb) { listeners.onHide.push(cb); },
   onShow: function (cb) { listeners.onShow.push(cb); },
   vibrateShort: function () {},
+  getLaunchOptionsSync: function () { return global.__launchOptions || { query: {} }; },
   requestAnimationFrame: function () { /* 不排队，避免模拟环境无限循环 */ },
   cloud: null,
 };
@@ -462,6 +463,61 @@ check('撤销次数用完后不能取消已放的猫', function () {
   if (g.cells[idx].state !== 'cat') throw new Error('应可正常放猫');
   g.onCellTap(idx);
   if (g.cells[idx].state !== 'cat') throw new Error('撤销用完后不应取消已放的猫');
+});
+check('区域高亮：按住格子高亮同区域，拖动/松手取消', function () {
+  g.loadLevel(1);
+  g.render();
+  const idx = 0;
+  const reg = g.cells[idx].region;
+  const c = cellCenter(idx);
+  const x = c.x * g.r.scale, y = c.y * g.r.scale;
+  listeners.touchstart.forEach(function (cb) { cb({ touches: [{ clientX: x, clientY: y }] }); });
+  if (g.highlightRegion !== reg) throw new Error('按住未高亮所在区域');
+  listeners.touchend.forEach(function (cb) { cb({ changedTouches: [{ clientX: x, clientY: y }] }); });
+  if (g.highlightRegion !== -1) throw new Error('松手后未取消高亮');
+  // 拖动进入标记后取消高亮
+  listeners.touchstart.forEach(function (cb) { cb({ touches: [{ clientX: x, clientY: y }] }); });
+  const c2 = cellCenter(1);
+  listeners.touchmove.forEach(function (cb) { cb({ touches: [{ clientX: c2.x * g.r.scale, clientY: c2.y * g.r.scale }] }); });
+  if (g.highlightRegion !== -1) throw new Error('拖动后未取消高亮');
+  listeners.touchend.forEach(function (cb) { cb({ changedTouches: [{ clientX: c2.x * g.r.scale, clientY: c2.y * g.r.scale }] }); });
+});
+check('多解法收集：不同摆法分别记录、重复不累加', function () {
+  const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
+  const LV = 16; // 9x9 多解关
+  g.loadLevel(LV);
+  const n = g.size;
+  const res = puzzleLib.countSolutions(n, g.region, 2);
+  if (res.count < 2) throw new Error('测试关卡应有多解');
+  function play(cols) {
+    g.loadLevel(LV);
+    for (let r = 0; r < n; r++) g.onCellTap(r * n + cols[r]);
+  }
+  play(res.solutions[0]);
+  const first = g.foundSolutionCount(LV);
+  if (first < 1) throw new Error('未记录首个解');
+  play(res.solutions[1]);
+  const second = g.foundSolutionCount(LV);
+  if (second !== first + 1) throw new Error('新摆法未计数');
+  play(res.solutions[1]);
+  if (g.foundSolutionCount(LV) !== second) throw new Error('重复摆法不应累加');
+  g.render();
+});
+check('关卡种子分享：种子码可解析回关号', function () {
+  g.loadLevel(26);
+  g.inviteFriend();
+  const shares = global.__shares || [];
+  const s = shares[shares.length - 1];
+  if (s.query.indexOf('seed=') < 0) throw new Error('分享 query 缺少种子');
+  const m = s.query.match(/seed=([^&]+)/);
+  if (!m) throw new Error('无法提取种子码');
+  if (m[1] !== 'SQ') throw new Error('第26关种子码应为SQ，实际' + m[1]);
+  // 通过种子启动应跳到同一关
+  global.__launchOptions = { query: { from: 'invite', seed: m[1] } };
+  const g2 = new Game(wx.createCanvas());
+  g2.stopTimer();
+  if (g2.level !== 26) throw new Error('按种子启动未跳到第26关，实际' + g2.level);
+  global.__launchOptions = null;
 });
 check('提示代价：用过提示最高2星', function () {
   g.loadLevel(16);

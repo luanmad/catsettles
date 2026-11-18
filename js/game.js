@@ -56,6 +56,14 @@ function formatTime(sec) {
   return (m < 10 ? '0' + m : m) + ':' + (r < 10 ? '0' + r : r);
 }
 
+// 关卡种子码：谜题完全由关号决定，用 base36 编码关号作为可分享的“同一局”标识
+function seedCode(level) { return 'S' + Math.max(1, Math.floor(level)).toString(36).toUpperCase(); }
+function levelFromSeed(code) {
+  if (!code || typeof code !== 'string' || code.charAt(0) !== 'S') return 0;
+  const lv = parseInt(code.slice(1), 36);
+  return lv >= 1 && lv <= TOTAL_LEVELS ? lv : 0;
+}
+
 class Game {
   constructor(canvas) {
     this.r = new Renderer(canvas, DW);
@@ -80,6 +88,7 @@ class Game {
     this.bestTotal = save.bestTotal || 0; // 历史最佳总通关用时
     this.maxLevel = Math.max(save.maxLevel || 1, 1);
     this.unlockedCats = Array.isArray(save.unlockedCats) ? save.unlockedCats : [];
+    this.foundSolutions = save.foundSolutions || {}; // { 关号: { 解法编码: 1 } }
     this.bestCombo = save.bestCombo || 0;
     this.perfectClears = save.perfectClears || 0;
     this.nickname = save.nickname || ('喵友' + String(1000 + Math.floor(Math.random() * 9000)));
@@ -118,6 +127,7 @@ class Game {
 
     this.touchStartPos = null;
     this.touchStartIdx = -1;
+    this.highlightRegion = -1; // 按住格子时高亮同区域
     this.suppressTap = false; // 拖动/长按已触发时抑制随后的 tap
     this.listScroll = { levels: 0, rank: 0, gallery: 0 };
 
@@ -142,7 +152,17 @@ class Game {
     this.layout = null;
     this.boardHit = []; // 每格命中矩形，长按检测用
 
-    this.loadLevel(Math.min(Math.max(save.level || 1, 1), this.maxLevel));
+    // 分享进入：解析 query 中的种子码，跳到同一关比拼
+    let startLevel = Math.min(Math.max(save.level || 1, 1), this.maxLevel);
+    try {
+      const opts = (typeof wx.getLaunchOptionsSync === 'function') ? wx.getLaunchOptionsSync() : null;
+      const q = (opts && opts.query) || {};
+      const fromSeed = levelFromSeed(q.seed);
+      const fromLevel = parseInt(q.level, 10);
+      const shared = fromSeed || (fromLevel >= 1 && fromLevel <= TOTAL_LEVELS ? fromLevel : 0);
+      if (shared) startLevel = shared;
+    } catch (e) {}
+    this.loadLevel(startLevel);
     this.bindInput();
     this.setupShare();
     this.refreshRank();
@@ -159,8 +179,8 @@ class Game {
         const self = this;
         wx.onShareAppMessage(function () {
           return {
-            title: '猫猫请落座 · 我玩到第' + self.level + '关了，来挑战！',
-            query: 'from=invite&level=' + self.level,
+            title: '猫猫请落座 · 挑战同题第' + self.level + '关（种子' + seedCode(self.level) + '）！',
+            query: 'from=invite&level=' + self.level + '&seed=' + seedCode(self.level),
             imageUrl: '',
           };
         });
@@ -178,6 +198,7 @@ class Game {
         bestStars: this.bestStars,
         bestTotal: this.bestTotal,
         unlockedCats: this.unlockedCats,
+        foundSolutions: this.foundSolutions,
         bestCombo: this.bestCombo,
         perfectClears: this.perfectClears,
         colorblind: this.colorblind,
@@ -430,6 +451,21 @@ class Game {
     return sum;
   }
 
+  // 当前棋盘摆法编码：每行猫所在列拼接，作为解的唯一标识
+  currentSolutionKey() {
+    const cols = new Array(this.size).fill(-1);
+    for (let i = 0; i < this.cells.length; i++) {
+      const c = this.cells[i];
+      if (c.state === 'cat') cols[c.row] = c.col;
+    }
+    return cols.join(',');
+  }
+
+  foundSolutionCount(level) {
+    const set = this.foundSolutions[level];
+    return set ? Object.keys(set).length : 0;
+  }
+
   // 按关卡/星数/连击/完美通关条件解锁猫咪，返回本次新解锁项
   checkCatUnlocks() {
     const earned = [];
@@ -478,6 +514,9 @@ class Game {
         this.persist(Math.min(level + 1, this.maxLevel));
       }
     }
+    // 记录本次发现的摆法
+    if (!this.foundSolutions[level]) this.foundSolutions[level] = {};
+    this.foundSolutions[level][this.currentSolutionKey()] = 1;
     const perfect = this.combo >= this.size && !this.usedHint;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
     if (perfect) this.perfectClears = (this.perfectClears || 0) + 1;
@@ -491,6 +530,7 @@ class Game {
       combo: this.combo,
       perfect: perfect,
       usedHint: this.usedHint,
+      solutions: this.foundSolutionCount(level),
     };
     const earned = this.checkCatUnlocks();
     this.persist(Math.min(level + 1, this.maxLevel));
@@ -610,8 +650,8 @@ class Game {
     try {
       if (typeof wx.shareAppMessage === 'function') {
         wx.shareAppMessage({
-          title: '猫猫请落座 · 我玩到第' + this.level + '关了，来挑战！',
-          query: 'from=invite&level=' + this.level,
+          title: '猫猫请落座 · 挑战同题第' + this.level + '关（种子' + seedCode(this.level) + '）！',
+          query: 'from=invite&level=' + this.level + '&seed=' + seedCode(this.level),
           imageUrl: '',
         });
         // 主动转发在开发/体验版常被微信限制；提示兜底路径
@@ -638,6 +678,10 @@ class Game {
       if (!t) return;
       self.touchStartPos = { x: t.clientX, y: t.clientY };
       self.touchStartIdx = cellAt(t.clientX, t.clientY);
+      self.highlightRegion = -1;
+      if (self.touchStartIdx >= 0 && !self.won && !self.overlay && !self.dialog && self.cells[self.touchStartIdx]) {
+        self.highlightRegion = self.cells[self.touchStartIdx].region;
+      }
       self.suppressTap = false;
       self.dragMark = null;
       // 标记模式下按下即标记，便于逐格点选；普通模式等拖动超过阈值再标记
@@ -651,6 +695,7 @@ class Game {
       const t = e.touches && e.touches[0];
       if (!t) return;
       if (self.dragMark) {
+        self.highlightRegion = -1; // 进入拖拽标记后不再高亮区域
         const idx = cellAt(t.clientX, t.clientY);
         if (idx >= 0) self.applyDragMark(idx);
         return;
@@ -660,6 +705,7 @@ class Game {
       const dx = Math.abs(t.clientX - self.touchStartPos.x) / self.r.scale;
       const dy = Math.abs(t.clientY - self.touchStartPos.y) / self.r.scale;
       if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) return;
+      self.highlightRegion = -1;
       if (self.beginDragMark(self.touchStartIdx)) {
         const idx = cellAt(t.clientX, t.clientY);
         if (idx >= 0) self.applyDragMark(idx);
@@ -670,6 +716,7 @@ class Game {
     wx.onTouchEnd(function (e) {
       const t = e.changedTouches && e.changedTouches[0];
       if (!t) return;
+      self.highlightRegion = -1; // 松手后取消高亮
       const lx = t.clientX / self.r.scale;
       const ly = t.clientY / self.r.scale;
 
@@ -859,7 +906,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消已放的猫也扣1次撤销次数，撤销或取消都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消已放的猫也扣1次撤销次数，撤销或取消都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -970,6 +1017,9 @@ class Game {
       } else if (this.colorblind) {
         r.textShadow(cell.symbol, x + cs / 2, y + cs / 2 + 1, L.cellFontTiny, '#ffffff', 'center', 'middle', 'rgba(0,0,0,0.35)', 3);
       }
+      if (this.highlightRegion >= 0 && cell.region === this.highlightRegion) {
+        r.strokeRoundRect(x + 3, y + 3, cs - 6, cs - 6, 8, '#ffffff', Math.max(4, cs * 0.09));
+      }
 
       r.addHit(x, y, cs, cs, null, { idx: i, longPress: true, onTap: () => this.onCellTap(i) });
     }
@@ -1050,6 +1100,8 @@ class Game {
       if (done) r.text('✓', x + cellW - 18, y + 16, 18, '#ffffff', 'center', 'middle');
       const lvStars = this.bestStars && this.bestStars[lv];
       if (lvStars) r.text('★', x + 16, y + cellW - 14, 18, '#ffd166', 'center', 'middle', 'bold');
+      const solCount = done ? this.foundSolutionCount(lv) : 0;
+      if (solCount > 1) r.text('×' + solCount, x + cellW - 20, y + cellW - 14, 16, '#ffffff', 'center', 'middle', 'bold');
       if (!locked) r.addHit(x, y, cellW, cellW, null, { onTap: () => this.loadLevel(lv) });
     }
     r.restore();
@@ -1217,6 +1269,9 @@ class Game {
     r.text('第' + this.level + '关通过！', r.DW / 2, y + 180, 40, C.text, 'center', 'middle', 'bold');
     r.text(this.allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦',
       r.DW / 2, y + 226, 22, C.subText, 'center', 'middle');
+    if (ws.solutions) {
+      r.text('本关已发现 ' + ws.solutions + ' 种摆法', r.DW / 2, y + 248, 18, C.subText, 'center', 'middle');
+    }
     if (showStars) {
       const stars = ws.stars || 0;
       for (let i = 0; i < 3; i++) {
@@ -1339,12 +1394,13 @@ class Game {
     this.settings = {
       items: [
         { label: '选择关卡', tap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } },
+        { label: '本关种子：' + seedCode(this.level) + '（同题挑战）', tap: () => this.inviteFriend() },
         { label: '猫咪图鉴 ' + this.unlockedCats.length + '/' + CAT_COLLECTION.length, tap: () => { this.overlay = 'gallery'; this.listScroll.gallery = 0; } },
         { label: '重玩本关', tap: () => this.loadLevel(this.level) },
         { label: '音效：' + (this.soundOn ? '开' : '关'), tap: () => { this.soundOn = !this.soundOn; sound.setEnabled(this.soundOn); if (this.soundOn) sound.play('tap'); this.persist(); } },
         { label: '重置进度', tap: () => { this.dialog = {
           title: '重置进度', content: '确定要清空关卡进度和成绩吗？', confirm: '确定重置', showCancel: true,
-          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestTotal = 0; this.unlockedCats = []; this.bestCombo = 0; this.perfectClears = 0; this.loadLevel(1); },
+          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestTotal = 0; this.unlockedCats = []; this.foundSolutions = {}; this.bestCombo = 0; this.perfectClears = 0; this.loadLevel(1); },
         }; } },
         { label: '好友排行榜', tap: () => { this.overlay = 'friendRank'; this.friendRankActive = false; } },
         { label: '排行榜', tap: () => { this.overlay = 'rank'; this.refreshRank(); } },
