@@ -93,6 +93,8 @@ class Game {
     try { save = wx.getStorageSync(SAVE_KEY) || {}; } catch (e) {}
     this.bestTimes = save.bestTimes || {};
     this.bestStars = save.bestStars || {}; // 每关最佳星级
+    this.bestScores = save.bestScores || {}; // 每关最高得分
+    this.totalScore = save.totalScore || 0; // 累计得分（各关最高分之和）
     this.bestTotal = save.bestTotal || 0; // 历史最佳总通关用时
     this.maxLevel = Math.max(save.maxLevel || 1, 1);
     this.unlockedCats = Array.isArray(save.unlockedCats) ? save.unlockedCats : [];
@@ -209,6 +211,8 @@ class Game {
         maxLevel: this.maxLevel,
         bestTimes: this.bestTimes,
         bestStars: this.bestStars,
+        bestScores: this.bestScores,
+        totalScore: this.totalScore,
         bestTotal: this.bestTotal,
         unlockedCats: this.unlockedCats,
         levelSeeds: this.levelSeeds,
@@ -337,7 +341,7 @@ class Game {
       self.rankList = (res.top || []).map(function (r) {
         return {
           rank: r.rank, nickname: r.nickname, maxLevel: r.maxLevel,
-          totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: !!r.isMe,
+          score: r.score || 0, totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: !!r.isMe,
         };
       });
       // 兼容旧记录：我的成绩有本关用时但缺总用时，用本地数据补报一次（只尝试一次，避免死循环）
@@ -363,8 +367,8 @@ class Game {
     return Math.floor(sum);
   }
 
-  submitScore(level, total, single) {
-    rankService.submitScore(level, total, single, this.nickname).then(() => this.refreshRank()).catch(() => {});
+  submitScore(level, total, single, score) {
+    rankService.submitScore(level, total, single, this.nickname, score).then(() => this.refreshRank()).catch(() => {});
   }
 
   /* ---------------- 游戏操作（复用原逻辑） ---------------- */
@@ -474,6 +478,18 @@ class Game {
     return sum;
   }
 
+  // 单关得分：难度基础 + 用时 + 连击 + 完美 + 星级 - 取消 - 生命消耗
+  calcScore(level, used, combo, perfect, stars) {
+    const cfg = this.levelConfig(level);
+    const cancels = Math.max(0, MAX_UNDOS - (this.undosLeft != null ? this.undosLeft : MAX_UNDOS));
+    const lostHearts = Math.max(0, MAX_HEARTS - this.hearts.filter(function (v) { return v; }).length);
+    const timeBonus = Math.max(0, Math.round(cfg.star2 - used) * 5);
+    const base = level * 100;
+    const score = base + timeBonus + combo * 30 + (perfect ? 200 : 0) + stars * 50
+      - cancels * 40 - lostHearts * 80;
+    return Math.max(0, score);
+  }
+
   // 当前棋盘摆法编码：每行猫所在列拼接，作为解的唯一标识
   currentSolutionKey() {
     const cols = new Array(this.size).fill(-1);
@@ -547,6 +563,13 @@ class Game {
     const perfect = this.combo >= this.size && !this.usedHint;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
     if (perfect) this.perfectClears = (this.perfectClears || 0) + 1;
+    // 得分：记录本关最高分，累计得分为各关最高分之和
+    const score = this.calcScore(level, used, this.combo, perfect, stars);
+    if (!this.bestScores) this.bestScores = {};
+    const isNewScore = score > (this.bestScores[level] || 0);
+    if (isNewScore) this.bestScores[level] = score;
+    this.totalScore = 0;
+    for (const k in this.bestScores) this.totalScore += this.bestScores[k] || 0;
     this.winStats = {
       single: used,
       total: total,
@@ -558,24 +581,28 @@ class Game {
       perfect: perfect,
       usedHint: this.usedHint,
       solutions: this.foundSolutionCount(level, this.currentSeed),
+      score: score,
+      bestScore: this.bestScores[level],
+      isNewScore: isNewScore,
     };
     const earned = this.checkCatUnlocks();
     this.persist(Math.min(level + 1, this.maxLevel));
     if (earned.length) {
       this.showToast('解锁新猫咪：' + earned.map(function (c) { return c.name; }).join('、'), 2200);
     }
-    this.submitScore(level, total, used);
-    this.reportFriendScore(level, total, used);
+    this.submitScore(level, total, used, this.totalScore);
+    this.reportFriendScore(level, total, used, this.totalScore);
   }
 
   // 上报成绩到微信托管数据，供开放数据域好友榜读取（真实微信昵称/头像由微信提供）
-  reportFriendScore(level, total, seconds) {
+  reportFriendScore(level, total, seconds, score) {
     if (!this.openDataContext) return;
     try {
       if (typeof wx.setUserCloudStorage !== 'function') return;
       const bestLevel = Math.max(level, 1);
-      // value 必须是字符串；存关数、总通关时间、单关时间
+      // value 必须是字符串；存累计得分、关数、总通关时间、单关时间
       const value = JSON.stringify({
+        score: Math.max(0, Math.floor(score || 0)),
         level: bestLevel,
         total: Math.max(0, Math.floor(total)),
         time: Math.max(0, Math.floor(seconds)),
@@ -941,7 +968,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消已放的猫也扣1次撤销次数，撤销或取消都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消已放的猫也扣1次撤销次数，撤销或取消都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。通关得分=关卡难度+用时+连击+完美+星级-取消-生命，累计得分越高排行榜越靠前。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -1171,17 +1198,17 @@ class Game {
     const r = this.r;
     const p = this.panelFrame('排行榜 TOP20');
     const meText = !this.rankReady ? '未启用' : (this.meInfo ? ('第' + this.meInfo.rank + '名') : '未上榜');
-    // 排名规则说明紧凑排列；「我的排名」并入下方用时表头行，不再单独占一行
-    r.text('按 关数 → 总用时 → 本关用时 排名', p.px + 40, p.py + 76, 17, C.subText, 'left', 'middle');
-    r.text('本关=到达该关所用时间', p.px + 40, p.py + 98, 17, C.subText, 'left', 'middle');
+    // 排名规则说明：得分越高越靠前
+    r.text('按 累计得分 排名，得分越高越靠前', p.px + 40, p.py + 76, 17, C.subText, 'left', 'middle');
+    r.text('得分 = 难度 + 用时 + 连击 + 完美 + 星级 - 取消 - 生命', p.px + 40, p.py + 98, 17, C.subText, 'left', 'middle');
     // 统一列坐标（表头与数据行共用，避免错位）
     const colLevel = p.px + 410;
-    const colTotal = p.px + 530;
+    const colScore = p.px + 530;
     const colSingle = p.px + p.pw - 24; // 右对齐
     const headY = p.py + 128;
     r.text('我的排名：' + meText, p.px + 40, headY, 21, C.coral, 'left', 'middle', 'bold');
     r.text('关数', colLevel, headY, 20, C.subText, 'center', 'middle', 'bold');
-    r.text('总用时', colTotal, headY, 20, C.subText, 'center', 'middle', 'bold');
+    r.text('得分', colScore, headY, 20, C.subText, 'center', 'middle', 'bold');
     r.text('本关', colSingle, headY, 20, C.subText, 'right', 'middle', 'bold');
     const listY = p.py + 150;
     const clipBottom = p.py + p.ph - 20;
@@ -1220,7 +1247,7 @@ class Game {
         r.text(medal.label, lx, y + 42, 18, medal.badge, 'left', 'middle', 'bold');
       }
       r.text(String(item.maxLevel), colLevel, y + 42, 24, C.subText, 'center', 'middle');
-      r.text(item.totalText, colTotal, y + 42, 23, C.text, 'center', 'middle', 'bold');
+      r.text(String(item.score || 0), colScore, y + 42, 24, C.orange, 'center', 'middle', 'bold');
       r.text(item.timeText, colSingle, y + 42, 23, C.subText, 'right', 'middle');
     }
     r.restore();
@@ -1304,7 +1331,10 @@ class Game {
     r.text('第' + this.level + '关通过！', r.DW / 2, y + 180, 40, C.text, 'center', 'middle', 'bold');
     r.text(this.allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦',
       r.DW / 2, y + 226, 22, C.subText, 'center', 'middle');
-    if (ws.solutions) {
+    if (typeof ws.score === 'number') {
+      r.text('本关得分 ' + ws.score + (ws.isNewScore ? '  新高分！' : '  最高 ' + ws.bestScore),
+        r.DW / 2, y + 248, 22, C.orange, 'center', 'middle', 'bold');
+    } else if (ws.solutions) {
       r.text('本关已发现 ' + ws.solutions + ' 种摆法', r.DW / 2, y + 248, 18, C.subText, 'center', 'middle');
     }
     if (showStars) {
@@ -1436,7 +1466,7 @@ class Game {
         { label: '音效：' + (this.soundOn ? '开' : '关'), tap: () => { this.soundOn = !this.soundOn; sound.setEnabled(this.soundOn); if (this.soundOn) sound.play('tap'); this.persist(); } },
         { label: '重置进度', tap: () => { this.dialog = {
           title: '重置进度', content: '确定要清空关卡进度和成绩吗？', confirm: '确定重置', showCancel: true,
-          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestTotal = 0; this.unlockedCats = []; this.levelSeeds = {}; this.foundSolutions = {}; this.bestCombo = 0; this.perfectClears = 0; this.loadLevel(1); },
+          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestScores = {}; this.totalScore = 0; this.bestTotal = 0; this.unlockedCats = []; this.levelSeeds = {}; this.foundSolutions = {}; this.bestCombo = 0; this.perfectClears = 0; this.loadLevel(1); },
         }; } },
         { label: '好友排行榜', tap: () => { this.overlay = 'friendRank'; this.friendRankActive = false; } },
         { label: '排行榜', tap: () => { this.overlay = 'rank'; this.refreshRank(); } },

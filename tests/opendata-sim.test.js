@@ -11,7 +11,8 @@ function ctxMock() {
   return {
     setTransform: noop, clearRect: noop, beginPath: noop, moveTo: noop, lineTo: noop,
     arcTo: noop, arc: noop, closePath: noop, fill: noop, stroke: noop, fillRect: noop,
-    fillText: noop, save: noop, restore: noop, rect: noop, clip: noop, drawImage: noop,
+    fillText: function (s) { (global.__drawTexts || (global.__drawTexts = [])).push(String(s)); },
+    save: noop, restore: noop, rect: noop, clip: noop, drawImage: noop,
     measureText: function (s) { return { width: String(s).length * 12 }; },
     set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {}, set font(v) {},
     set textAlign(v) {}, set textBaseline(v) {},
@@ -28,7 +29,8 @@ global.wx = {
   onMessage: function (cb) { onMessageCb = cb; },
   getFriendCloudStorage: function (opts) { getFriendCb = opts; },
 };
-global.requestAnimationFrame = function () {}; // 不循环
+let rafCb = null;
+global.requestAnimationFrame = function (cb) { rafCb = cb; }; // 收集循环回调，按需手动触发
 
 // 加载子域代码
 require(path.join(__dirname, '..', 'openDataContext', 'index.js'));
@@ -40,11 +42,11 @@ function check(name, fn) {
   catch (e) { console.log('  FAIL ' + name + ' -> ' + (e && e.stack || e)); process.exitCode = 1; }
 }
 
-function mkUser(nickname, level, total, time) {
+function mkUser(nickname, level, total, time, score) {
   return {
     avatarUrl: 'http://img/' + nickname,
     nickname: nickname,
-    KVDataList: [{ key: 'cat_rank_v1', value: JSON.stringify({ level: level, total: total, time: time }) }],
+    KVDataList: [{ key: 'cat_rank_v1', value: JSON.stringify({ level: level, total: total, time: time, score: score }) }],
   };
 }
 
@@ -57,19 +59,25 @@ check('收到 show 后拉取好友数据', function () {
   if (!getFriendCb) throw new Error('未调用 getFriendCloudStorage');
   if (getFriendCb.keyList[0] !== 'cat_rank_v1') throw new Error('key 不匹配');
 });
-check('数据解析与排序（关数降序、用时升序）', function () {
+check('数据解析与排序（得分降序优先）', function () {
   const res = {
     data: [
-      mkUser('小明', 3, 200, 50),
-      mkUser('小红', 5, 300, 30),
-      mkUser('小刚', 5, 250, 20), // 同关数，总时间更短应排前面
-      mkUser('小强', 5, 250, 15), // 同关同总时间，单关更短排前
+      mkUser('小明', 3, 200, 50, 9000), // 得分最高，应排第一（即使关数最低）
+      mkUser('小红', 5, 300, 30, 8000),
+      mkUser('小刚', 5, 250, 20, 8000), // 同分，关数相同总用时更短应排前
+      mkUser('小强', 5, 250, 15, 8000), // 同分同关同总用时，单关更短排前
       { nickname: '无数据用户', avatarUrl: '', KVDataList: [] }, // 应被过滤
     ],
   };
-  getFriendCb.success(res);
-  // 通过再次 show + scroll 间接触发 draw，确认无异常
-  onMessageCb({ action: 'scroll', dy: 100 });
+  global.__drawTexts = [];
+  getFriendCb.success(res); // 拉取成功后子域更新榜单数据
+  if (rafCb) rafCb(); // 手动触发一帧绘制
+  const texts = global.__drawTexts || [];
+  const xm = texts.indexOf('小明'), xh = texts.indexOf('小红'), xg = texts.indexOf('小刚'), xq = texts.indexOf('小强');
+  // 小明得分最高第一；同分组按关数→总用时→单关用时：小强、小刚、小红
+  if (!(xm >= 0 && xm < xq && xq < xg && xg < xh)) {
+    throw new Error('好友榜未按得分/关数/用时排序: 小明' + xm + ' 小强' + xq + ' 小刚' + xg + ' 小红' + xh);
+  }
 });
 check('scroll 与 hide 消息无异常', function () {
   onMessageCb({ action: 'scroll', dy: -50 });

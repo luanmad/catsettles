@@ -24,13 +24,14 @@ const C = {
   toolActive: '#bfe8dc',
 };
 
-// 解析托管数据 value：{level, total, time}
+// 解析托管数据 value：{score, level, total, time}
 function parseKV(kvList) {
   for (let i = 0; i < kvList.length; i++) {
     if (kvList[i].key === KEY) {
       try {
         const v = JSON.parse(kvList[i].value);
         return {
+          score: Math.max(0, Math.floor(v.score || 0)),
           level: v.level || 1,
           // 兼容旧数据：没有 total 时用 time 兜底
           total: (typeof v.total === 'number' ? v.total : (v.time || 0)),
@@ -55,6 +56,7 @@ function fetchFriends() {
           list.push({
             avatarUrl: u.avatarUrl,
             nickname: u.nickname || '微信用户',
+            score: k.score,
             level: k.level,
             total: k.total,
             time: k.time,
@@ -62,8 +64,9 @@ function fetchFriends() {
           });
           loadAvatar(u.avatarUrl);
         });
-        // 排序：关数降序 → 总时间升序 → 单关时间升序
+        // 排序：得分降序 → 关数降序 → 总时间升序 → 单关时间升序
         list.sort(function (a, b) {
+          if (b.score !== a.score) return b.score - a.score;
           if (b.level !== a.level) return b.level - a.level;
           if (b.total !== a.total) return a.total - b.total;
           return a.time - b.time;
@@ -118,11 +121,11 @@ function draw() {
     return;
   }
 
-  // 表头
+  // 表头：得分优先
   const headY = 26;
-  fillText('关数', w - 250, headY, 18, C.subText, 'left');
-  fillText('总用时', w - 150, headY, 18, C.subText, 'left');
-  fillText('本关', w - 20, headY, 18, C.subText, 'right');
+  fillText('得分', w - 210, headY, 18, C.subText, 'left');
+  fillText('关数', w - 110, headY, 18, C.subText, 'left');
+  fillText('用时', w - 20, headY, 18, C.subText, 'right');
 
   const rowH = 88;
   const top = 48;
@@ -180,10 +183,10 @@ function draw() {
       const lx = Math.min(128 + nw + 10, w - 300);
       fillText(medal.label, lx, y + rowH / 2, 18, medal.badge, 'left', 'bold');
     }
-    // 关数 / 总用时 / 本关
-    fillText(String(r.level), w - 250, y + rowH / 2, 24, C.subText, 'left');
-    fillText(formatTime(r.total), w - 150, y + rowH / 2, 22, C.text, 'left', 'bold');
-    fillText(formatTime(r.time), w - 20, y + rowH / 2, 22, C.subText, 'right');
+    // 得分 / 关数 / 本关用时
+    fillText(String(r.score), w - 210, y + rowH / 2, 24, C.orange || '#ff8a3d', 'left', 'bold');
+    fillText(String(r.level), w - 110, y + rowH / 2, 24, C.subText, 'left');
+    fillText(formatTime(r.time), w - 20, y + rowH / 2, 22, C.text, 'right');
   }
   ctx.restore();
 }

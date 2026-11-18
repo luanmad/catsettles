@@ -272,8 +272,8 @@ check('通关流程', function () {
   const kv = reports[reports.length - 1].KVDataList[0];
   if (kv.key !== 'cat_rank_v1') throw new Error('上报 key 错误: ' + kv.key);
   const parsed = JSON.parse(kv.value);
-  if (parsed.level !== 1 || typeof parsed.time !== 'number' || typeof parsed.total !== 'number') {
-    throw new Error('上报数据格式错误（应含 level/total/time）: ' + kv.value);
+  if (parsed.level !== 1 || typeof parsed.time !== 'number' || typeof parsed.total !== 'number' || typeof parsed.score !== 'number') {
+    throw new Error('上报数据格式错误（应含 level/total/time/score）: ' + kv.value);
   }
   // 验证结算页 4 项时间统计齐全
   if (!g.winStats) throw new Error('未生成 winStats');
@@ -387,22 +387,22 @@ check('普通模式：单击仍放猫（拖动阈值不影响单击）', functio
   if (g.cells[0].state !== 'cat') throw new Error('单击未放猫: ' + g.cells[0].state);
   if (g.catsPlaced !== 1) throw new Error('放猫计数错误: ' + g.catsPlaced);
 });
-check('排行榜：我的排名并入用时表头行、前三名有冠亚季标识', function () {
+check('排行榜：我的排名与得分表头同一行、前三名有冠亚季标识', function () {
   g.rankReady = true;
   g.meInfo = { rank: 1 };
   g.rankList = [
-    { rank: 1, nickname: '喵友2869', maxLevel: 10, totalText: '07:58', timeText: '01:05', isMe: true },
-    { rank: 2, nickname: '小猫', maxLevel: 10, totalText: '08:10', timeText: '01:12', isMe: false },
-    { rank: 3, nickname: '喵星人', maxLevel: 9, totalText: '09:00', timeText: '01:30', isMe: false },
-    { rank: 4, nickname: '路人', maxLevel: 8, totalText: '10:00', timeText: '02:00', isMe: false },
+    { rank: 1, nickname: '喵友2869', maxLevel: 10, score: 3200, totalText: '07:58', timeText: '01:05', isMe: true },
+    { rank: 2, nickname: '小猫', maxLevel: 10, score: 3000, totalText: '08:10', timeText: '01:12', isMe: false },
+    { rank: 3, nickname: '喵星人', maxLevel: 9, score: 2600, totalText: '09:00', timeText: '01:30', isMe: false },
+    { rank: 4, nickname: '路人', maxLevel: 8, score: 2000, totalText: '10:00', timeText: '02:00', isMe: false },
   ];
   drawnTexts.length = 0;
   g.overlay = 'rank'; g.render();
   g.closeOverlay();
   const me = drawnTexts.find(function (t) { return t.s.indexOf('我的排名：') === 0; });
-  const head = drawnTexts.find(function (t) { return t.s === '总用时'; });
+  const head = drawnTexts.find(function (t) { return t.s === '得分'; });
   if (!me) throw new Error('未绘制我的排名');
-  if (!head) throw new Error('未绘制用时表头');
+  if (!head) throw new Error('未绘制得分表头');
   if (Math.abs(me.y - head.y) > 0.5) throw new Error('我的排名未与用时表头同一行: ' + me.y + ' vs ' + head.y);
   ['冠', '亚', '季'].forEach(function (label) {
     if (!drawnTexts.some(function (t) { return t.s === label; })) throw new Error('缺少前三名标识: ' + label);
@@ -575,6 +575,38 @@ check('猫咪图鉴：解锁条件、存档与面板渲染', function () {
   if (!drawnTexts.some(function (t) { return t.s.indexOf('猫咪图鉴') >= 0; })) throw new Error('图鉴标题未绘制');
   if (!drawnTexts.some(function (t) { return t.s === '橘座'; })) throw new Error('已解锁猫咪名未绘制');
   g.closeOverlay();
+});
+
+check('得分机制：按难度/用时/连击/取消/生命计分，越高分越高', function () {
+  g.loadLevel(10, 999);
+  g.hearts = [1, 1]; g.undosLeft = 3;
+  const full = g.calcScore(10, 10, 6, true, 3);
+  g.hearts = [0, 1]; g.undosLeft = 1;
+  const penalized = g.calcScore(10, 10, 6, true, 3);
+  if (full <= penalized) throw new Error('取消/生命惩罚未降低得分');
+  const slow = g.calcScore(10, 1000, 6, true, 3);
+  const fast = g.calcScore(10, 10, 6, true, 3);
+  if (fast <= slow) throw new Error('用时越短应得分越高');
+  const lowCombo = g.calcScore(10, 10, 2, false, 1);
+  if (fast <= lowCombo) throw new Error('连击/完美/星级应提高得分');
+  const harder = g.calcScore(20, 10, 6, true, 3);
+  if (harder <= fast) throw new Error('关卡难度应提高得分');
+  if (g.calcScore(10, 99999, 0, false, 0) < 0) throw new Error('得分不应为负');
+});
+check('得分存档：通关记录本关最高分并累计', function () {
+  g.bestScores = {}; g.totalScore = 0;
+  g.loadLevel(1, 555);
+  g.stopTimer(); g.seconds = 0; g.winStats = null;
+  g.finishLevel();
+  const first = g.winStats.score;
+  if (!(first > 0) || g.bestScores[1] !== first) throw new Error('未记录本关得分');
+  if (g.totalScore !== first) throw new Error('累计得分错误');
+  // 更低分重玩不应降低最高分
+  g.loadLevel(1, 555);
+  g.stopTimer(); g.seconds = 500; g.winStats = null;
+  g.finishLevel();
+  if (g.bestScores[1] !== first || g.totalScore !== first) throw new Error('低分重玩不应降低最高分与累计分');
+  g.render();
 });
 
 g.stopTimer();
