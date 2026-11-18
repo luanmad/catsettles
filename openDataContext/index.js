@@ -32,6 +32,7 @@ function parseKV(kvList) {
         const v = JSON.parse(kvList[i].value);
         return {
           score: Math.max(0, Math.floor(v.score || 0)),
+          lastScore: Math.max(0, Math.floor(v.lastScore || 0)),
           level: v.level || 1,
           // 兼容旧数据：没有 total 时用 time 兜底
           total: (typeof v.total === 'number' ? v.total : (v.time || 0)),
@@ -57,6 +58,7 @@ function fetchFriends() {
             avatarUrl: u.avatarUrl,
             nickname: u.nickname || '微信用户',
             score: k.score,
+            lastScore: k.lastScore,
             level: k.level,
             total: k.total,
             time: k.time,
@@ -121,11 +123,11 @@ function draw() {
     return;
   }
 
-  // 表头：得分优先
+  // 表头：总分 / 本关 / 关数
   const headY = 26;
-  fillText('得分', w - 210, headY, 18, C.subText, 'left');
-  fillText('关数', w - 110, headY, 18, C.subText, 'left');
-  fillText('用时', w - 20, headY, 18, C.subText, 'right');
+  fillText('总分', w - 210, headY, 18, C.subText, 'left');
+  fillText('本关', w - 110, headY, 18, C.subText, 'left');
+  fillText('关数', w - 20, headY, 18, C.subText, 'right');
 
   const rowH = 88;
   const top = 48;
@@ -183,10 +185,15 @@ function draw() {
       const lx = Math.min(128 + nw + 10, w - 300);
       fillText(medal.label, lx, y + rowH / 2, 18, medal.badge, 'left', 'bold');
     }
-    // 得分 / 关数 / 本关用时
-    fillText(String(r.score), w - 210, y + rowH / 2, 24, C.orange || '#ff8a3d', 'left', 'bold');
-    fillText(String(r.level), w - 110, y + rowH / 2, 24, C.subText, 'left');
-    fillText(formatTime(r.time), w - 20, y + rowH / 2, 22, C.text, 'right');
+    // 总分 / 本关得分 / 关数，数值过长时缩小字号避免遮挡
+    function fitFilled(str, size, maxW) {
+      const tw = ctx.measureText(str).width;
+      return tw > maxW ? Math.max(13, Math.floor(size * maxW / tw)) : size;
+    }
+    const totalStr = String(r.score || 0), lastStr = String(r.lastScore || 0);
+    fillText(totalStr, w - 210, y + rowH / 2, fitFilled(totalStr, 24, 85), C.orange || '#ff8a3d', 'left', 'bold');
+    fillText(lastStr, w - 110, y + rowH / 2, fitFilled(lastStr, 24, 85), C.subText, 'left');
+    fillText(String(r.level), w - 20, y + rowH / 2, 22, C.text, 'right');
   }
   ctx.restore();
 }

@@ -41,6 +41,7 @@ exports.main = async function (event) {
       const total = Math.max(0, Math.floor(Number(event.total) || 0));
       const time = Math.max(0, Math.floor(Number(event.time) || 0));
       const score = num(event.score);
+      const lastScore = num(event.lastScore);
       const nickname = String(event.nickname || '喵友').slice(0, 16);
       const res = await db.collection(COL).where({ openid: OPENID }).get();
       const doc = res.data[0];
@@ -49,19 +50,19 @@ exports.main = async function (event) {
         await db.collection(COL).add({
           data: {
             openid: OPENID, nickname: nickname,
-            maxLevel: level, total: total, time: time, score: score,
+            maxLevel: level, total: total, time: time, score: score, lastScore: lastScore,
             updatedAt: Date.now(),
           },
         });
       } else {
-        const next = { maxLevel: level, total: total, time: time, score: score };
+        const next = { maxLevel: level, total: total, time: time, score: score, lastScore: lastScore };
         // 旧记录缺 total/score 视为待迁移，直接用新数据覆盖
         const legacy = (typeof doc.total !== 'number' || doc.total <= 0)
           || (typeof doc.score !== 'number');
         if (legacy || better(next, doc)) {
           await db.collection(COL).doc(doc._id).update({
             data: {
-              nickname: nickname, maxLevel: level, total: total, time: time, score: score,
+              nickname: nickname, maxLevel: level, total: total, time: time, score: score, lastScore: lastScore,
               updatedAt: Date.now(),
             },
           });
@@ -80,6 +81,7 @@ exports.main = async function (event) {
           nickname: r.nickname,
           maxLevel: r.maxLevel || 0,
           score: num(r.score),
+          lastScore: num(r.lastScore),
           total: num(r.total),
           time: num(r.time),
           isMe: r.openid === OPENID,
@@ -90,7 +92,8 @@ exports.main = async function (event) {
         if (rows[i].openid === OPENID) {
           me = {
             rank: i + 1, nickname: rows[i].nickname, maxLevel: rows[i].maxLevel || 0,
-            score: num(rows[i].score), total: num(rows[i].total), time: num(rows[i].time),
+            score: num(rows[i].score), lastScore: num(rows[i].lastScore),
+            total: num(rows[i].total), time: num(rows[i].time),
           };
           break;
         }

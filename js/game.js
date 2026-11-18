@@ -341,7 +341,8 @@ class Game {
       self.rankList = (res.top || []).map(function (r) {
         return {
           rank: r.rank, nickname: r.nickname, maxLevel: r.maxLevel,
-          score: r.score || 0, totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: !!r.isMe,
+          score: r.score || 0, lastScore: r.lastScore || 0,
+          totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: !!r.isMe,
         };
       });
       // 兼容旧记录：我的成绩有本关用时但缺总用时，用本地数据补报一次（只尝试一次，避免死循环）
@@ -367,8 +368,8 @@ class Game {
     return Math.floor(sum);
   }
 
-  submitScore(level, total, single, score) {
-    rankService.submitScore(level, total, single, this.nickname, score).then(() => this.refreshRank()).catch(() => {});
+  submitScore(level, total, single, score, lastScore) {
+    rankService.submitScore(level, total, single, this.nickname, score, lastScore).then(() => this.refreshRank()).catch(() => {});
   }
 
   /* ---------------- 游戏操作（复用原逻辑） ---------------- */
@@ -490,6 +491,19 @@ class Game {
     return Math.max(0, score);
   }
 
+  // 当前关实时预估得分（用于主界面即时反馈）
+  currentScore() {
+    const cfg = this.levelConfig(this.level);
+    const cancels = Math.max(0, MAX_UNDOS - (this.undosLeft != null ? this.undosLeft : MAX_UNDOS));
+    const lostHearts = Math.max(0, MAX_HEARTS - this.hearts.filter(function (v) { return v; }).length);
+    const timeBonus = Math.max(0, Math.round(cfg.star2 - this.seconds) * 5);
+    const stars = this.seconds <= cfg.star3 ? 3 : (this.seconds <= cfg.star2 ? 2 : 1);
+    const perfect = this.combo >= this.size && !this.usedHint;
+    const s = this.level * 100 + timeBonus + this.combo * 30 + (perfect ? 200 : 0) + stars * 50
+      - cancels * 40 - lostHearts * 80;
+    return Math.max(0, s);
+  }
+
   // 当前棋盘摆法编码：每行猫所在列拼接，作为解的唯一标识
   currentSolutionKey() {
     const cols = new Array(this.size).fill(-1);
@@ -590,19 +604,20 @@ class Game {
     if (earned.length) {
       this.showToast('解锁新猫咪：' + earned.map(function (c) { return c.name; }).join('、'), 2200);
     }
-    this.submitScore(level, total, used, this.totalScore);
-    this.reportFriendScore(level, total, used, this.totalScore);
+    this.submitScore(level, total, used, this.totalScore, score);
+    this.reportFriendScore(level, total, used, this.totalScore, score);
   }
 
   // 上报成绩到微信托管数据，供开放数据域好友榜读取（真实微信昵称/头像由微信提供）
-  reportFriendScore(level, total, seconds, score) {
+  reportFriendScore(level, total, seconds, score, lastScore) {
     if (!this.openDataContext) return;
     try {
       if (typeof wx.setUserCloudStorage !== 'function') return;
       const bestLevel = Math.max(level, 1);
-      // value 必须是字符串；存累计得分、关数、总通关时间、单关时间
+      // value 必须是字符串；存累计得分、本关得分、关数、总通关时间、单关时间
       const value = JSON.stringify({
         score: Math.max(0, Math.floor(score || 0)),
+        lastScore: Math.max(0, Math.floor(lastScore || 0)),
         level: bestLevel,
         total: Math.max(0, Math.floor(total)),
         time: Math.max(0, Math.floor(seconds)),
@@ -655,13 +670,15 @@ class Game {
       if (c.state === 'cat' || c.state === 'ban') { hasAny = true; break; }
     }
     if (!hasAny) return;
+    if (this.undosLeft <= 0) { this.showToast('本关撤销次数已用完，不能清除了'); return; }
+    this.undosLeft -= 1; // 清除也算一次撤销
+    this.combo = 0;
     this.pushHistory();
     for (let i = 0; i < this.cells.length; i++) {
       this.cells[i].state = 'empty';
       this.cells[i].auto = false;
     }
     this.catsPlaced = 0;
-    this.combo = 0;
   }
 
   // 拖拽批量标记：一次拖拽算一步历史，可一次撤销
@@ -968,7 +985,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消已放的猫也扣1次撤销次数，撤销或取消都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。通关得分=关卡难度+用时+连击+完美+星级-取消-生命，累计得分越高排行榜越靠前。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消、撤销按钮、清除按钮都扣1次撤销次数，用完就不能取消/撤销/清除，且都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。通关得分=关卡难度+用时+连击+完美+星级-取消-生命，累计得分越高排行榜越靠前。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -981,6 +998,14 @@ class Game {
       if (this.hearts[i]) r.heart(hx, cy, 52, C.coral, true);
       else { r.heart(hx, cy, 52, C.border, false); }
     }
+    // 排名上移到爱心行右侧，点击打开排行榜
+    if (this.rankReady) {
+      const bw = 150, bx = L.W - L.pad - bw, by = L.heartsY + 2, bh = 58;
+      r.fillRoundRect(bx, by, bw, bh, 29, C.card);
+      r.trophy(bx + 28, by + bh / 2, 30, C.orange);
+      r.text(this.myRankText, bx + 52, by + bh / 2, 24, C.orange, 'left', 'middle', 'bold');
+      r.addHit(bx, by, bw, bh, null, { onTap: () => { this.overlay = 'rank'; this.refreshRank(); } });
+    }
   }
 
   drawProgress() {
@@ -992,21 +1017,29 @@ class Game {
       { icon: 'cat', text: this.catsPlaced + ' / ' + this.size },
       { icon: 'clock', text: formatTime(this.seconds) },
     ];
-    if (this.combo >= 2) pills.push({ icon: 'combo', text: this.combo + ' 连击' });
-    if (this.rankReady) pills.push({ icon: 'trophy', text: this.myRankText, tap: () => { this.overlay = 'rank'; this.refreshRank(); } });
+    if (this.combo >= 2) pills.push({ icon: 'combo', text: String(this.combo) });
+    // 本关得分 + 总得分（排名已上移到爱心行），均只显示图标 + 数值
+    pills.push({ icon: 'medal', text: String(this.currentScore()) });
+    pills.push({ icon: 'trophy', text: String(this.totalScore || 0) });
 
     const pw = (L.W - L.pad * 2 - gap * (pills.length - 1)) / pills.length;
+    const iconW = 50;
+    const textMaxW = pw - iconW - 20; // 数值可用宽度，留右侧内边距
     for (let i = 0; i < pills.length; i++) {
       const x = L.pad + i * (pw + gap);
       r.fillRoundRect(x, y, pw, h, 30, C.card);
       const cy = y + h / 2;
-      const iconW = 48;
-      const ix = x + 34;
-      if (pills[i].icon === 'cat') r.cat(ix, cy, 34, C.coral);
-      else if (pills[i].icon === 'clock') r.clock(ix, cy, 34, C.text);
-      else if (pills[i].icon === 'combo') r.text('×', ix, cy, 40, C.orange, 'center', 'middle', 'bold');
-      else if (pills[i].icon === 'trophy') r.trophy(ix, cy, 34, C.orange);
-      r.text(pills[i].text, x + iconW + 8, cy, 26, C.text, 'left', 'middle', 'bold');
+      const ix = x + 30;
+      if (pills[i].icon === 'cat') r.cat(ix, cy, 32, C.coral);
+      else if (pills[i].icon === 'clock') r.clock(ix, cy, 32, C.text);
+      else if (pills[i].icon === 'medal') r.medal(ix, cy, 32, C.orange);
+      else if (pills[i].icon === 'combo') r.text('×', ix, cy, 38, C.orange, 'center', 'middle', 'bold');
+      else if (pills[i].icon === 'trophy') r.trophy(ix, cy, 32, C.orange);
+      // 数值字号按字符宽度自适应，确保大数字不被胶囊遮挡
+      const raw = 26;
+      const measured = r.measureText(pills[i].text, raw);
+      const ts = measured > textMaxW ? Math.max(15, Math.floor(raw * textMaxW / measured)) : raw;
+      r.text(pills[i].text, x + iconW + 4, cy, ts, C.text, 'left', 'middle', 'bold');
       if (pills[i].tap) r.addHit(x, y, pw, h, null, { onTap: pills[i].tap });
     }
   }
@@ -1091,7 +1124,7 @@ class Game {
     const r = this.r, L = this.layout;
     const y = L.bottomY, h = L.bottomH;
     const tools = [
-      { icon: 'trash', label: '清除', tap: () => this.onClear(), muted: false, active: false },
+      { icon: 'trash', label: '清除', tap: () => this.onClear(), muted: this.undosLeft <= 0, active: false },
       { icon: 'undo', label: '撤销', tap: () => this.onUndo(), muted: this.history.length === 0 || this.undosLeft <= 0, active: false, badge: this.undosLeft },
       { icon: 'cross', label: '标记', tap: () => { if (!this.won) this.markMode = !this.markMode; }, muted: false, active: this.markMode },
       { icon: 'bulb', label: '提示', tap: () => this.onHint(), muted: this.hintsLeft <= 0, active: false, badge: this.hintsLeft },
@@ -1208,8 +1241,8 @@ class Game {
     const headY = p.py + 128;
     r.text('我的排名：' + meText, p.px + 40, headY, 21, C.coral, 'left', 'middle', 'bold');
     r.text('关数', colLevel, headY, 20, C.subText, 'center', 'middle', 'bold');
-    r.text('得分', colScore, headY, 20, C.subText, 'center', 'middle', 'bold');
-    r.text('本关', colSingle, headY, 20, C.subText, 'right', 'middle', 'bold');
+    r.text('总得分', colScore, headY, 20, C.subText, 'center', 'middle', 'bold');
+    r.text('本关得分', colSingle, headY, 20, C.subText, 'right', 'middle', 'bold');
     const listY = p.py + 150;
     const clipBottom = p.py + p.ph - 20;
     this.clipRegion(p.px, listY, p.pw, clipBottom - listY);
@@ -1247,8 +1280,13 @@ class Game {
         r.text(medal.label, lx, y + 42, 18, medal.badge, 'left', 'middle', 'bold');
       }
       r.text(String(item.maxLevel), colLevel, y + 42, 24, C.subText, 'center', 'middle');
-      r.text(String(item.score || 0), colScore, y + 42, 24, C.orange, 'center', 'middle', 'bold');
-      r.text(item.timeText, colSingle, y + 42, 23, C.subText, 'right', 'middle');
+      const totalStr = String(item.score || 0), lastStr = String(item.lastScore || 0);
+      const fitSize = function (str, maxW) {
+        const w = r.measureText(str, 24);
+        return w > maxW ? Math.max(14, Math.floor(24 * maxW / w)) : 24;
+      };
+      r.text(totalStr, colScore, y + 42, fitSize(totalStr, 110), C.orange, 'center', 'middle', 'bold');
+      r.text(lastStr, colSingle, y + 42, fitSize(lastStr, 110), C.text, 'right', 'middle', 'bold');
     }
     r.restore();
   }

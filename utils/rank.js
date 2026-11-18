@@ -36,12 +36,13 @@ function call(action, data) {
 }
 
 // 上报成绩：level=已到达关数，total=总通关时间（秒），time=本关用时（秒），score=累计得分
-function submitScore(level, total, seconds, nickname, score) {
+function submitScore(level, total, seconds, nickname, score, lastScore) {
   return call('submit', {
     level: level,
     total: total,
     time: seconds,
     score: score || 0,
+    lastScore: lastScore || 0,
     nickname: nickname || '喵友',
   }).then(function (result) {
     return result || {};

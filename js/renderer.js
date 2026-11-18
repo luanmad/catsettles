@@ -100,6 +100,13 @@ class Renderer {
     c.fillText(String(str), x, y);
   }
 
+  // 测量文本像素宽度（用于自适应字号）
+  measureText(str, size) {
+    const c = this.ctx;
+    c.font = 'bold ' + size + 'px -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", sans-serif';
+    return c.measureText(String(str)).width;
+  }
+
   // 带阴影的文本（用于标记符号）
   textShadow(str, x, y, size, color, align, baseline, shadowColor, blur) {
     const c = this.ctx;
@@ -341,6 +348,36 @@ class Renderer {
     c.fill();
     c.fillRect(-k * 0.12, -k * 0.05, k * 0.24, k * 0.5);
     c.fillRect(-k * 0.45, k * 0.45, k * 0.9, k * 0.22);
+    c.restore();
+  }
+
+  // 奖章图标：表示本关得分（与 trophy 的总得分区分）
+  medal(cx, cy, s, color) {
+    const c = this.ctx;
+    const k = s / 2;
+    c.save();
+    c.translate(cx, cy);
+    c.fillStyle = color;
+    c.beginPath();
+    c.moveTo(-k * 0.18, -k * 0.95);
+    c.lineTo(-k * 0.02, -k * 0.42);
+    c.lineTo(-k * 0.62, -k * 0.42);
+    c.closePath();
+    c.fill();
+    c.beginPath();
+    c.moveTo(k * 0.18, -k * 0.95);
+    c.lineTo(k * 0.02, -k * 0.42);
+    c.lineTo(k * 0.62, -k * 0.42);
+    c.closePath();
+    c.fill();
+    c.beginPath();
+    c.arc(0, k * 0.16, k * 0.66, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = C_PAGE_BG;
+    c.font = 'bold ' + Math.round(k * 0.8) + 'px sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('★', 0, k * 0.18);
     c.restore();
   }
 }

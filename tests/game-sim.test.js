@@ -391,18 +391,18 @@ check('排行榜：我的排名与得分表头同一行、前三名有冠亚季�
   g.rankReady = true;
   g.meInfo = { rank: 1 };
   g.rankList = [
-    { rank: 1, nickname: '喵友2869', maxLevel: 10, score: 3200, totalText: '07:58', timeText: '01:05', isMe: true },
-    { rank: 2, nickname: '小猫', maxLevel: 10, score: 3000, totalText: '08:10', timeText: '01:12', isMe: false },
-    { rank: 3, nickname: '喵星人', maxLevel: 9, score: 2600, totalText: '09:00', timeText: '01:30', isMe: false },
-    { rank: 4, nickname: '路人', maxLevel: 8, score: 2000, totalText: '10:00', timeText: '02:00', isMe: false },
+    { rank: 1, nickname: '喵友2869', maxLevel: 10, score: 3200, lastScore: 480, totalText: '07:58', timeText: '01:05', isMe: true },
+    { rank: 2, nickname: '小猫', maxLevel: 10, score: 3000, lastScore: 450, totalText: '08:10', timeText: '01:12', isMe: false },
+    { rank: 3, nickname: '喵星人', maxLevel: 9, score: 2600, lastScore: 400, totalText: '09:00', timeText: '01:30', isMe: false },
+    { rank: 4, nickname: '路人', maxLevel: 8, score: 2000, lastScore: 300, totalText: '10:00', timeText: '02:00', isMe: false },
   ];
   drawnTexts.length = 0;
   g.overlay = 'rank'; g.render();
   g.closeOverlay();
   const me = drawnTexts.find(function (t) { return t.s.indexOf('我的排名：') === 0; });
-  const head = drawnTexts.find(function (t) { return t.s === '得分'; });
+  const head = drawnTexts.find(function (t) { return t.s === '总得分'; });
   if (!me) throw new Error('未绘制我的排名');
-  if (!head) throw new Error('未绘制得分表头');
+  if (!head) throw new Error('未绘制总得分表头');
   if (Math.abs(me.y - head.y) > 0.5) throw new Error('我的排名未与用时表头同一行: ' + me.y + ' vs ' + head.y);
   ['冠', '亚', '季'].forEach(function (label) {
     if (!drawnTexts.some(function (t) { return t.s === label; })) throw new Error('缺少前三名标识: ' + label);
@@ -607,6 +607,32 @@ check('得分存档：通关记录本关最高分并累计', function () {
   g.finishLevel();
   if (g.bestScores[1] !== first || g.totalScore !== first) throw new Error('低分重玩不应降低最高分与累计分');
   g.render();
+});
+
+check('清除扣撤销次数：无次数时不能清除', function () {
+  g.loadLevel(1, 333);
+  g.onCellTap(0); // 放一只猫
+  if (g.cells[0].state !== 'cat') throw new Error('未放上猫');
+  const before = g.undosLeft;
+  g.onClear();
+  if (g.undosLeft !== before - 1) throw new Error('清除应扣1次撤销');
+  if (g.cells[0].state !== 'empty' || g.catsPlaced !== 0) throw new Error('清除未生效');
+  // 撤销耗尽后不能再清除
+  g.loadLevel(1, 333);
+  g.onCellTap(0);
+  g.undosLeft = 0;
+  g.onClear();
+  if (g.cells[0].state !== 'cat') throw new Error('无撤销次数时不应清除');
+});
+check('主界面显示得分：图标+数值、无文字标签、大数字自适应', function () {
+  g.loadLevel(1, 111);
+  g.totalScore = 1234567; // 大数值，验证不被裁剪
+  drawnTexts.length = 0;
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s === '1234567'; })) throw new Error('进度栏未显示累计得分');
+  if (drawnTexts.some(function (t) { return t.s.indexOf('本关 ') === 0 || t.s.indexOf('总得分 ') === 0; })) {
+    throw new Error('得分胶囊不应含文字标签');
+  }
 });
 
 g.stopTimer();

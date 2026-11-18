@@ -42,11 +42,11 @@ function check(name, fn) {
   catch (e) { console.log('  FAIL ' + name + ' -> ' + (e && e.stack || e)); process.exitCode = 1; }
 }
 
-function mkUser(nickname, level, total, time, score) {
+function mkUser(nickname, level, total, time, score, lastScore) {
   return {
     avatarUrl: 'http://img/' + nickname,
     nickname: nickname,
-    KVDataList: [{ key: 'cat_rank_v1', value: JSON.stringify({ level: level, total: total, time: time, score: score }) }],
+    KVDataList: [{ key: 'cat_rank_v1', value: JSON.stringify({ level: level, total: total, time: time, score: score, lastScore: lastScore || 0 }) }],
   };
 }
 
