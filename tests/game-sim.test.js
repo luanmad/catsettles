@@ -432,6 +432,37 @@ check('限制撤销：每关3次，超出后不再撤销', function () {
   if (g.catsPlaced !== before) throw new Error('超额撤销仍生效');
   g.render();
 });
+check('反复点击同一格：连击不累积、取消扣撤销次数', function () {
+  g.loadLevel(1);
+  // 找一个合法格反复点击
+  const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
+  const res = puzzleLib.countSolutions(g.size, g.region, 1);
+  const idx = res.solutions[0][0];
+  let undos = g.undosLeft;
+  for (let i = 0; i < 4; i++) {
+    g.onCellTap(idx); // 放上
+    if (g.combo !== 1) throw new Error('反复放同一格连击应为1，实际' + g.combo);
+    if (i < 3) {
+      g.onCellTap(idx); // 取消
+      if (g.combo !== 0) throw new Error('取消后连击应清零，实际' + g.combo);
+      undos--;
+      if (g.undosLeft !== undos) throw new Error('取消应扣1次撤销');
+    }
+  }
+  if (g.undosLeft !== 0) throw new Error('3次取消后撤销应归零');
+  g.render();
+});
+check('撤销次数用完后不能取消已放的猫', function () {
+  g.loadLevel(1);
+  const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
+  const res = puzzleLib.countSolutions(g.size, g.region, 1);
+  const idx = res.solutions[0][0];
+  g.undosLeft = 0;
+  g.onCellTap(idx);
+  if (g.cells[idx].state !== 'cat') throw new Error('应可正常放猫');
+  g.onCellTap(idx);
+  if (g.cells[idx].state !== 'cat') throw new Error('撤销用完后不应取消已放的猫');
+});
 check('提示代价：用过提示最高2星', function () {
   g.loadLevel(16);
   g.seconds = 0;

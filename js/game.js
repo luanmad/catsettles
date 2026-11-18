@@ -353,6 +353,9 @@ class Game {
     if (!cell) return;
     if (this.markMode) { this.toggleBan(idx); return; }
     if (cell.state === 'cat') {
+      if (this.undosLeft <= 0) { this.showToast('本关撤销次数已用完'); return; }
+      this.undosLeft -= 1; // 点格子取消也算一次撤销
+      this.combo = 0; // 取消打破连续正确
       this.pushHistory();
       cell.state = 'empty'; cell.auto = false;
       sound.play('tap');
@@ -375,7 +378,7 @@ class Game {
     if (cell.state === 'ban') {
       cell.state = 'empty'; cell.auto = false;
     } else {
-      if (cell.state === 'cat') this.catsPlaced -= 1;
+      if (cell.state === 'cat') { this.catsPlaced -= 1; this.combo = 0; }
       cell.state = 'ban'; cell.auto = false;
     }
     sound.play('tap');
@@ -586,7 +589,7 @@ class Game {
     if (!cell) return;
     d.visited[idx] = true;
     if (d.target === 'ban') {
-      if (cell.state === 'cat') this.catsPlaced -= 1;
+      if (cell.state === 'cat') { this.catsPlaced -= 1; this.combo = 0; }
       cell.state = 'ban';
       cell.auto = false;
     } else {
@@ -856,7 +859,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，撤销会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消已放的猫也扣1次撤销次数，撤销或取消都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
