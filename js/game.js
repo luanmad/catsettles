@@ -1073,9 +1073,9 @@ class Game {
       const bx = blockX + colW * i;
       const cx = bx + blockW / 2;
       r.fillRoundRect(bx, y + 9, blockW, blockH, 18, items[i].bg);
-      this.drawMiniGrid(cx - 54, y + 24, items[i].sq);
-      r.text(items[i].lines[0], cx, y + blockH - 44, 21, C.text, 'center', 'middle', 'bold');
-      r.text(items[i].lines[1], cx, y + blockH - 18, 21, C.text, 'center', 'middle', 'bold');
+      this.drawMiniGrid(cx - 54, y + 18, items[i].sq);
+      r.text(items[i].lines[0], cx, y + blockH - 32, 20, C.text, 'center', 'middle', 'bold');
+      r.text(items[i].lines[1], cx, y + blockH - 8, 20, C.text, 'center', 'middle', 'bold');
     }
   }
 
@@ -1387,23 +1387,23 @@ class Game {
     r.cat(r.DW / 2, y + 96, 108, this.allCleared ? C.coral : C.greenDeep);
     r.text('第' + this.level + '关通过！', r.DW / 2, y + 180, 40, C.text, 'center', 'middle', 'bold');
     r.text(this.allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦',
-      r.DW / 2, y + 226, 22, C.subText, 'center', 'middle');
+      r.DW / 2, y + 222, 22, C.subText, 'center', 'middle');
     const scoreShift = showScore ? 84 : 0;
     if (showScore) {
       // 得分主视觉：金色高亮卡片 + 大号分数，新高分加描边光晕与徽章
-      const scW = cw - 120, scH = 80, scY = y + 238, scX = x + 60;
+      const scW = cw - 120, scH = 76, scY = y + 252, scX = x + 60;
       r.fillRoundRect(scX, scY, scW, scH, 20, '#fff7e6');
       if (ws.isNewScore) r.strokeRoundRect(scX + 2, scY + 2, scW - 4, scH - 4, 19, C.orange, 4);
       r.text('本关得分', r.DW / 2, scY + 20, 19, C.subText, 'center', 'middle');
-      r.text(String(ws.score), r.DW / 2, scY + 50, 52, C.orange, 'center', 'middle', 'bold');
+      r.text(String(ws.score), r.DW / 2, scY + 52, 50, C.orange, 'center', 'middle', 'bold');
       if (ws.isNewScore) {
         r.fillRoundRect(scX + scW - 108, scY + 10, 96, 34, 17, C.orange);
         r.text('新高分!', scX + scW - 60, scY + 27, 18, '#ffffff', 'center', 'middle', 'bold');
       } else if (ws.bestScore) {
-        r.text('最高 ' + ws.bestScore, scX + scW - 16, scY + 24, 17, C.subText, 'right', 'middle');
+        r.text('最高 ' + ws.bestScore, scX + scW - 16, scY + 22, 17, C.subText, 'right', 'middle');
       }
     } else if (ws.solutions) {
-      r.text('本关已发现 ' + ws.solutions + ' 种摆法', r.DW / 2, y + 248, 18, C.subText, 'center', 'middle');
+      r.text('本关已发现 ' + ws.solutions + ' 种摆法', r.DW / 2, y + 252, 18, C.subText, 'center', 'middle');
     }
     if (showStars) {
       const stars = ws.stars || 0;
