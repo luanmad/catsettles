@@ -9,8 +9,8 @@ const sound = require('../utils/sound.js');
 const DW = 750;
 const SAVE_KEY = 'catwhere_save_v2';
 const TOTAL_LEVELS = 60;
-const PALETTE = ['#f4756b', '#6fd8c6', '#f78fb3', '#c9a7f5', '#ffd166', '#7fb3f5', '#f5a35c', '#9fd977'];
-const SYMBOLS = ['●', '▲', '■', '★', '◆', '♥', '✚', '♠'];
+const PALETTE = ['#f4756b', '#6fd8c6', '#f78fb3', '#c9a7f5', '#ffd166', '#7fb3f5', '#f5a35c', '#9fd977', '#2e8b8b', '#a66a3f'];
+const SYMBOLS = ['●', '▲', '■', '★', '◆', '♥', '✚', '♠', '▼', '◇'];
 const MAX_HEARTS = 3;
 const CELL_GAP = 8;
 const MAX_HISTORY = 60;
@@ -160,8 +160,8 @@ class Game {
     } catch (e) {}
   }
 
-  levelSize(level) { return Math.min(4 + Math.floor((level - 1) / 3), 8); }
-  hintQuota(level) { return Math.min(1 + Math.floor((level - 1) / 6), 2); }
+  levelSize(level) { return Math.min(4 + Math.floor((level - 1) / 3), 9); }
+  hintQuota(level) { return level <= 13 ? 1 : 2; }
 
   loadLevel(level) {
     const size = this.levelSize(level);

@@ -122,6 +122,39 @@ check('初始化布局与首帧渲染', function () {
   if (!g.layout) throw new Error('layout 未计算');
   if (g.size !== 4 || g.level !== 1) throw new Error('初始关卡错误');
 });
+check('关卡尺寸与提示分档：16关起9x9封顶、13关提示分界', function () {
+  const cases = [[1, 4], [3, 4], [4, 5], [12, 7], [13, 8], [15, 8], [16, 9], [18, 9], [21, 9], [60, 9]];
+  cases.forEach(function (pair) {
+    if (g.levelSize(pair[0]) !== pair[1]) {
+      throw new Error('第' + pair[0] + '关尺寸应为' + pair[1] + '，实际' + g.levelSize(pair[0]));
+    }
+  });
+  [1, 6, 13].forEach(function (lv) {
+    if (g.hintQuota(lv) !== 1) throw new Error('第' + lv + '关提示应为1次');
+  });
+  [14, 21, 60].forEach(function (lv) {
+    if (g.hintQuota(lv) !== 2) throw new Error('第' + lv + '关提示应为2次');
+  });
+});
+check('9x9关卡：颜色与符号覆盖全部9个区域，无越界', function () {
+  g.loadLevel(16);
+  if (g.size !== 9) throw new Error('第16关不是9x9');
+  g.render();
+  const colors = {}, symbols = {};
+  for (let i = 0; i < g.cells.length; i++) {
+    const cell = g.cells[i];
+    if (!cell.color) throw new Error('区域颜色缺失: region=' + cell.region);
+    if (cell.symbol === undefined || cell.symbol === null) throw new Error('区域符号越界: region=' + cell.region);
+    colors[cell.region] = cell.color;
+    symbols[cell.region] = cell.symbol;
+  }
+  if (Object.keys(colors).length !== 9) throw new Error('区域数不为9');
+  const usedColors = {};
+  for (const reg in colors) {
+    if (usedColors[colors[reg]]) throw new Error('不同区域出现同色: ' + colors[reg]);
+    usedColors[colors[reg]] = true;
+  }
+});
 check('绘制各浮层无异常', function () {
   g.overlay = 'levels'; g.render();
   g.overlay = 'rank'; g.render();

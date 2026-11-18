@@ -17,7 +17,7 @@ function check(name, fn) {
 }
 
 function levelSize(level) {
-  return Math.min(4 + Math.floor((level - 1) / 3), 8);
+  return Math.min(4 + Math.floor((level - 1) / 3), 9);
 }
 
 function seedOf(level) {
@@ -88,7 +88,7 @@ for (let level = 1; level <= LEVELS; level++) {
   });
 
   check(tag + ' 相邻区域颜色不同', function () {
-    const colorOf = puzzle.assignColors(gen.region, size, ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']);
+    const colorOf = puzzle.assignColors(gen.region, size, ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9']);
     for (let idx = 0; idx < size * size; idx++) {
       const r = Math.floor(idx / size);
       const c = idx % size;
@@ -102,7 +102,7 @@ for (let level = 1; level <= LEVELS; level++) {
   });
 
   check(tag + ' 每个区域颜色唯一', function () {
-    const colorOf = puzzle.assignColors(gen.region, size, ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']);
+    const colorOf = puzzle.assignColors(gen.region, size, ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9']);
     const seen = {};
     for (let reg = 0; reg < size; reg++) {
       assert.ok(!seen[colorOf[reg]], '区域之间出现同色：' + colorOf[reg]);
