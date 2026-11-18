@@ -12,8 +12,25 @@ const TOTAL_LEVELS = 60;
 const PALETTE = ['#f4756b', '#6fd8c6', '#f78fb3', '#c9a7f5', '#ffd166', '#7fb3f5', '#f5a35c', '#9fd977', '#2e8b8b', '#a66a3f'];
 const SYMBOLS = ['●', '▲', '■', '★', '◆', '♥', '✚', '♠', '▼', '◇'];
 const MAX_HEARTS = 2;
+const MAX_UNDOS = 3;
 const CELL_GAP = 8;
 const MAX_HISTORY = 60;
+
+// 猫咪图鉴：按关数/星数/连击/完美通关逐步解锁
+const CAT_COLLECTION = [
+  { id: 0, name: '橘座', color: '#f5a35c', hint: '通关第 5 关', cond: { level: 5 } },
+  { id: 1, name: '奶糖', color: '#f78fb3', hint: '通关第 10 关', cond: { level: 10 } },
+  { id: 2, name: '青团', color: '#6fd8c6', hint: '通关第 15 关', cond: { level: 15 } },
+  { id: 3, name: '蓝莓', color: '#7fb3f5', hint: '通关第 20 关', cond: { level: 20 } },
+  { id: 4, name: '葡萄', color: '#c9a7f5', hint: '通关第 25 关', cond: { level: 25 } },
+  { id: 5, name: '抹茶', color: '#9fd977', hint: '通关第 30 关', cond: { level: 30 } },
+  { id: 6, name: '珊瑚', color: '#f4756b', hint: '通关第 35 关', cond: { level: 35 } },
+  { id: 7, name: '星砂', color: '#ffd166', hint: '累计 20 颗星', cond: { stars: 20 } },
+  { id: 8, name: '闪电', color: '#ff8a3d', hint: '单关达成 6 连击', cond: { combo: 6 } },
+  { id: 9, name: '团子', color: '#2e8b8b', hint: '首次完美通关', cond: { perfect: 1 } },
+  { id: 10, name: '夜影', color: '#a66a3f', hint: '通关第 45 关', cond: { level: 45 } },
+  { id: 11, name: '猫王', color: '#2f8c78', hint: '通关全部 60 关', cond: { level: 60 } },
+];
 
 // 颜色主题（对应原 wxss）
 const C = {
@@ -62,6 +79,9 @@ class Game {
     this.bestStars = save.bestStars || {}; // 每关最佳星级
     this.bestTotal = save.bestTotal || 0; // 历史最佳总通关用时
     this.maxLevel = Math.max(save.maxLevel || 1, 1);
+    this.unlockedCats = Array.isArray(save.unlockedCats) ? save.unlockedCats : [];
+    this.bestCombo = save.bestCombo || 0;
+    this.perfectClears = save.perfectClears || 0;
     this.nickname = save.nickname || ('喵友' + String(1000 + Math.floor(Math.random() * 9000)));
     this.colorblind = !!save.colorblind;
     this.soundOn = save.sound !== false;
@@ -79,6 +99,9 @@ class Game {
     this.heartShakeUntil = 0;
     this.markMode = false;
     this.hintsLeft = 1;
+    this.undosLeft = MAX_UNDOS;
+    this.usedHint = false;
+    this.combo = 0;
     this.history = [];
     this.seconds = 0;
     this.timerBase = 0;
@@ -96,7 +119,7 @@ class Game {
     this.touchStartPos = null;
     this.touchStartIdx = -1;
     this.suppressTap = false; // 拖动/长按已触发时抑制随后的 tap
-    this.listScroll = { levels: 0, rank: 0 };
+    this.listScroll = { levels: 0, rank: 0, gallery: 0 };
 
     this.rankReady = false;
     this.myRankText = '';
@@ -154,6 +177,9 @@ class Game {
         bestTimes: this.bestTimes,
         bestStars: this.bestStars,
         bestTotal: this.bestTotal,
+        unlockedCats: this.unlockedCats,
+        bestCombo: this.bestCombo,
+        perfectClears: this.perfectClears,
         colorblind: this.colorblind,
         nickname: this.nickname,
         sound: this.soundOn,
@@ -216,12 +242,16 @@ class Game {
     this.hearts = new Array(MAX_HEARTS).fill(1);
     this.markMode = false;
     this.hintsLeft = this.hintQuota(level);
+    this.undosLeft = MAX_UNDOS;
+    this.usedHint = false;
+    this.combo = 0;
     this.history = [];
     this.won = false;
     this.isNewBest = false;
     this.allCleared = level >= TOTAL_LEVELS;
     this.overlay = null;
     this.listScroll.levels = 0;
+    this.listScroll.gallery = 0;
     this.seconds = 0; // 每关计时从零开始（关键：不能延续上一关）
     this.stopTimer();
     this.persist(level);
@@ -361,11 +391,13 @@ class Game {
     target.state = 'cat';
     sound.play('place');
     this.catsPlaced += 1;
+    this.combo += 1;
     if (this.catsPlaced === this.size) this.finishLevel();
   }
 
   penalize(target, reason) {
     this.pushHistory();
+    this.combo = 0;
     for (let i = this.hearts.length - 1; i >= 0; i--) {
       if (this.hearts[i]) { this.hearts[i] = 0; break; }
     }
@@ -387,6 +419,29 @@ class Game {
         };
       }, 400);
     }
+  }
+
+  totalStars() {
+    let sum = 0;
+    for (const lv in this.bestStars) sum += this.bestStars[lv] || 0;
+    return sum;
+  }
+
+  // 按关卡/星数/连击/完美通关条件解锁猫咪，返回本次新解锁项
+  checkCatUnlocks() {
+    const earned = [];
+    for (let i = 0; i < CAT_COLLECTION.length; i++) {
+      const cat = CAT_COLLECTION[i];
+      if (this.unlockedCats.indexOf(cat.id) >= 0) continue;
+      const cond = cat.cond;
+      let ok = false;
+      if (cond.level) ok = !!this.bestTimes[cond.level] || this.maxLevel > cond.level;
+      else if (cond.stars) ok = this.totalStars() >= cond.stars;
+      else if (cond.combo) ok = this.bestCombo >= cond.combo;
+      else if (cond.perfect) ok = this.perfectClears >= cond.perfect;
+      if (ok) { this.unlockedCats.push(cat.id); earned.push(cat); }
+    }
+    return earned;
   }
 
   finishLevel() {
@@ -413,12 +468,16 @@ class Game {
     const cfg = this.levelConfigCur || this.levelConfig(level);
     if (cfg.starEnabled) {
       stars = used <= cfg.star3 ? 3 : (used <= cfg.star2 ? 2 : 1);
+      if (this.usedHint) stars = Math.min(stars, 2); // 用过提示最高2星
       if (!this.bestStars) this.bestStars = {};
       if ((this.bestStars[level] || 0) < stars) {
         this.bestStars[level] = stars;
         this.persist(Math.min(level + 1, this.maxLevel));
       }
     }
+    const perfect = this.combo >= this.size && !this.usedHint;
+    if (this.combo > this.bestCombo) this.bestCombo = this.combo;
+    if (perfect) this.perfectClears = (this.perfectClears || 0) + 1;
     this.winStats = {
       single: used,
       total: total,
@@ -426,7 +485,15 @@ class Game {
       bestTotal: this.bestTotal,
       stars: stars,
       starEnabled: cfg.starEnabled,
+      combo: this.combo,
+      perfect: perfect,
+      usedHint: this.usedHint,
     };
+    const earned = this.checkCatUnlocks();
+    this.persist(Math.min(level + 1, this.maxLevel));
+    if (earned.length) {
+      this.showToast('解锁新猫咪：' + earned.map(function (c) { return c.name; }).join('、'), 2200);
+    }
     this.submitScore(level, total, used);
     this.reportFriendScore(level, total, used);
   }
@@ -454,6 +521,8 @@ class Game {
   onUndo() {
     if (this.won || this.overlay) return;
     if (!this.history.length) { this.showToast('没有可以撤销的步骤'); return; }
+    if (this.undosLeft <= 0) { this.showToast('本关撤销次数已用完'); return; }
+    this.undosLeft -= 1;
     const snap = this.history.pop();
     for (let i = 0; i < this.cells.length; i++) {
       this.cells[i].state = snap.states[i];
@@ -461,6 +530,7 @@ class Game {
     }
     this.catsPlaced = snap.catsPlaced;
     this.hintsLeft = Math.min(snap.hintsLeft, this.hintsLeft);
+    this.combo = 0; // 撤销打断连续正确
   }
 
   onHint() {
@@ -475,6 +545,7 @@ class Game {
     sound.play('hint');
     this.catsPlaced += 1;
     this.hintsLeft -= 1;
+    this.usedHint = true;
     this.vibrate();
     if (this.catsPlaced === this.size) this.finishLevel();
   }
@@ -493,6 +564,7 @@ class Game {
       this.cells[i].auto = false;
     }
     this.catsPlaced = 0;
+    this.combo = 0;
   }
 
   // 拖拽批量标记：一次拖拽算一步历史，可一次撤销
@@ -619,14 +691,16 @@ class Game {
       if (self.touchStartPos) {
         const dy = (t.clientY - self.touchStartPos.y) / self.r.scale;
         const dx = (t.clientX - self.touchStartPos.x) / self.r.scale;
-        if (Math.abs(dy) > 12 && (self.overlay === 'levels' || self.overlay === 'rank' || self.overlay === 'friendRank')) {
+        if (Math.abs(dy) > 12 && (self.overlay === 'levels' || self.overlay === 'rank' || self.overlay === 'friendRank' || self.overlay === 'gallery')) {
           if (self.overlay === 'friendRank') {
             if (self.openDataContext) {
               try { self.openDataContext.postMessage({ action: 'scroll', dy: -dy }); } catch (e) {}
             }
           } else {
             const key = self.overlay;
-            const max = self.overlay === 'levels' ? Math.max(0, Math.ceil(TOTAL_LEVELS / 8) * 96 - 780) : Math.max(0, self.rankList.length * 92 - 720);
+            const max = self.overlay === 'levels' ? Math.max(0, Math.ceil(TOTAL_LEVELS / 8) * 96 - 780)
+              : self.overlay === 'gallery' ? Math.max(0, Math.ceil(CAT_COLLECTION.length / 4) * 164 - 760)
+              : Math.max(0, self.rankList.length * 92 - 720);
             self.listScroll[key] = Math.max(0, Math.min(max, self.listScroll[key] - dy));
           }
           self.touchStartPos = null;
@@ -712,6 +786,7 @@ class Game {
     this.drawBottomBar();
 
     if (this.overlay === 'levels') this.drawLevelsPanel();
+    else if (this.overlay === 'gallery') this.drawGalleryPanel();
     else if (this.overlay === 'rank') this.drawRankPanel();
     else if (this.overlay === 'friendRank') this.drawFriendRankPanel();
     else if (this.overlay === 'win') this.drawWinPanel();
@@ -781,7 +856,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。第16关起按用时评1-3星。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，撤销会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -805,6 +880,7 @@ class Game {
       { icon: 'cat', text: this.catsPlaced + ' / ' + this.size },
       { icon: 'clock', text: formatTime(this.seconds) },
     ];
+    if (this.combo >= 2) pills.push({ icon: 'combo', text: this.combo + ' 连击' });
     if (this.rankReady) pills.push({ icon: 'trophy', text: this.myRankText, tap: () => { this.overlay = 'rank'; this.refreshRank(); } });
 
     const pw = (L.W - L.pad * 2 - gap * (pills.length - 1)) / pills.length;
@@ -816,6 +892,7 @@ class Game {
       const ix = x + 34;
       if (pills[i].icon === 'cat') r.cat(ix, cy, 34, C.coral);
       else if (pills[i].icon === 'clock') r.clock(ix, cy, 34, C.text);
+      else if (pills[i].icon === 'combo') r.text('×', ix, cy, 40, C.orange, 'center', 'middle', 'bold');
       else if (pills[i].icon === 'trophy') r.trophy(ix, cy, 34, C.orange);
       r.text(pills[i].text, x + iconW + 8, cy, 26, C.text, 'left', 'middle', 'bold');
       if (pills[i].tap) r.addHit(x, y, pw, h, null, { onTap: pills[i].tap });
@@ -900,7 +977,7 @@ class Game {
     const y = L.bottomY, h = L.bottomH;
     const tools = [
       { icon: 'trash', label: '清除', tap: () => this.onClear(), muted: false, active: false },
-      { icon: 'undo', label: '撤销', tap: () => this.onUndo(), muted: this.history.length === 0, active: false },
+      { icon: 'undo', label: '撤销', tap: () => this.onUndo(), muted: this.history.length === 0 || this.undosLeft <= 0, active: false, badge: this.undosLeft },
       { icon: 'cross', label: '标记', tap: () => { if (!this.won) this.markMode = !this.markMode; }, muted: false, active: this.markMode },
       { icon: 'bulb', label: '提示', tap: () => this.onHint(), muted: this.hintsLeft <= 0, active: false, badge: this.hintsLeft },
       { icon: 'eye', label: '色盲模式', tap: () => { this.colorblind = !this.colorblind; this.persist(); }, muted: false, active: this.colorblind },
@@ -971,6 +1048,31 @@ class Game {
       const lvStars = this.bestStars && this.bestStars[lv];
       if (lvStars) r.text('★', x + 16, y + cellW - 14, 18, '#ffd166', 'center', 'middle', 'bold');
       if (!locked) r.addHit(x, y, cellW, cellW, null, { onTap: () => this.loadLevel(lv) });
+    }
+    r.restore();
+  }
+
+  drawGalleryPanel() {
+    const r = this.r;
+    const p = this.panelFrame('猫咪图鉴');
+    const cols = 4, cellW = 148, gap = 16;
+    const startX = p.px + (p.pw - (cols * cellW + (cols - 1) * gap)) / 2;
+    const clipTop = p.listY;
+    const clipBottom = p.py + p.ph - 24;
+    r.text('已收集 ' + this.unlockedCats.length + ' / ' + CAT_COLLECTION.length + ' 只 · 最佳连击 ' + this.bestCombo + ' · 完美通关 ' + (this.perfectClears || 0) + ' 次',
+      p.px + 40, p.listY - 4, 22, C.subText, 'left', 'middle');
+    this.clipRegion(p.px, clipTop + 32, p.pw, clipBottom - clipTop - 32);
+    for (let i = 0; i < CAT_COLLECTION.length; i++) {
+      const cat = CAT_COLLECTION[i];
+      const row = Math.floor(i / cols), col = i % cols;
+      const x = startX + col * (cellW + gap);
+      const y = clipTop + 40 + row * (cellW + gap) - this.listScroll.gallery;
+      if (y + cellW < clipTop + 32 || y > clipBottom) continue;
+      const unlocked = this.unlockedCats.indexOf(cat.id) >= 0;
+      r.fillRoundRect(x, y, cellW, cellW, 18, unlocked ? C.lightBg : C.border);
+      r.cat(x + cellW / 2, y + 54, 68, unlocked ? cat.color : '#b6bfd2');
+      r.text(unlocked ? cat.name : '???', x + cellW / 2, y + 102, 24, unlocked ? C.text : C.subText, 'center', 'middle', 'bold');
+      r.text(unlocked ? cat.hint : '未解锁', x + cellW / 2, y + 130, 18, unlocked ? C.subText : '#aeb8ce', 'center', 'middle');
     }
     r.restore();
   }
@@ -1103,7 +1205,8 @@ class Game {
       stars: 0, starEnabled: false,
     };
     const showStars = !!ws.starEnabled;
-    const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0) + (showStars ? 62 : 0);
+    const showCombo = (ws.combo || 0) >= 2;
+    const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0) + (showStars ? 62 : 0) + (showCombo ? 54 : 0);
     const y = Math.max(20, (r.DH - ch) / 2);
     const x = (r.DW - cw) / 2;
     r.fillRoundRect(x, y, cw, ch, 32, C.card);
@@ -1117,8 +1220,13 @@ class Game {
         r.text('★', r.DW / 2 + (i - 1) * 56, y + 262, 44, i < stars ? C.orange : C.border, 'center', 'middle', 'bold');
       }
     }
+    // 连击/完美展示
+    if (showCombo) {
+      const msg = ws.perfect ? '完美通关！' + ws.combo + ' 连击，全程零失误' : ws.combo + ' 连击！再接再厉';
+      r.text(msg, r.DW / 2, y + 292 + (showStars ? 62 : 0), 24, ws.perfect ? C.orange : C.subText, 'center', 'middle', 'bold');
+    }
     // 统计四宫格：本关用时 / 总通关用时 / 最佳本关 / 最佳总通关
-    const sy = y + 278 + (showStars ? 62 : 0);
+    const sy = y + 278 + (showStars ? 62 : 0) + (showCombo ? 54 : 0);
     const boxH = 168;
     r.fillRoundRect(x + 50, sy, cw - 100, boxH, 20, C.lightBg);
     r.fillRect(x + cw / 2 - 1, sy + 16, 2, boxH - 32, C.border);
@@ -1228,11 +1336,12 @@ class Game {
     this.settings = {
       items: [
         { label: '选择关卡', tap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } },
+        { label: '猫咪图鉴 ' + this.unlockedCats.length + '/' + CAT_COLLECTION.length, tap: () => { this.overlay = 'gallery'; this.listScroll.gallery = 0; } },
         { label: '重玩本关', tap: () => this.loadLevel(this.level) },
         { label: '音效：' + (this.soundOn ? '开' : '关'), tap: () => { this.soundOn = !this.soundOn; sound.setEnabled(this.soundOn); if (this.soundOn) sound.play('tap'); this.persist(); } },
         { label: '重置进度', tap: () => { this.dialog = {
           title: '重置进度', content: '确定要清空关卡进度和成绩吗？', confirm: '确定重置', showCancel: true,
-          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestTotal = 0; this.loadLevel(1); },
+          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestTotal = 0; this.unlockedCats = []; this.bestCombo = 0; this.perfectClears = 0; this.loadLevel(1); },
         }; } },
         { label: '好友排行榜', tap: () => { this.overlay = 'friendRank'; this.friendRankActive = false; } },
         { label: '排行榜', tap: () => { this.overlay = 'rank'; this.refreshRank(); } },

@@ -418,5 +418,64 @@ check('浮层关闭按钮避开右上角微信胶囊区', function () {
   if (close.x > g.r.DW - 190) throw new Error('关闭按钮过于靠近胶囊: x=' + close.x + ', 上限=' + (g.r.DW - 190));
 });
 
+check('限制撤销：每关3次，超出后不再撤销', function () {
+  g.loadLevel(1);
+  if (g.undosLeft !== 3) throw new Error('初始撤销次数应为3');
+  for (let i = 0; i < 3; i++) {
+    g.onCellTap(0);
+    g.onUndo();
+  }
+  if (g.undosLeft !== 0) throw new Error('3次撤销后应归零');
+  g.onCellTap(0);
+  const before = g.catsPlaced;
+  g.onUndo();
+  if (g.catsPlaced !== before) throw new Error('超额撤销仍生效');
+  g.render();
+});
+check('提示代价：用过提示最高2星', function () {
+  g.loadLevel(16);
+  g.seconds = 0;
+  g.onHint();
+  g.winStats = null;
+  g.finishLevel();
+  if (!g.winStats) throw new Error('未生成结算数据');
+  if (g.winStats.usedHint !== true) throw new Error('未记录使用提示');
+  if (g.winStats.stars !== 2) throw new Error('用提示应最高2星，实际' + g.winStats.stars);
+});
+check('无错连击：放错清零、完美通关记录', function () {
+  const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
+  g.loadLevel(1);
+  const res = puzzleLib.countSolutions(g.size, g.region, 1);
+  const cols = res.solutions[0];
+  g.onCellTap(cols[0]);
+  g.onCellTap(g.size + cols[1]);
+  if (g.combo !== 2) throw new Error('连续放对应累计连击，实际' + g.combo);
+  g.onCellTap(cols[0] === 0 ? 1 : 0); // 与首只同行，必定冲突
+  if (g.combo !== 0) throw new Error('放错后连击应清零');
+  g.loadLevel(1);
+  for (let r = 0; r < g.size; r++) g.onCellTap(r * g.size + cols[r]);
+  if (!g.winStats) throw new Error('未生成结算数据');
+  if (g.winStats.combo !== g.size) throw new Error('完美通关连击数错误');
+  if (g.winStats.perfect !== true) throw new Error('应判定为完美通关');
+  if (g.bestCombo < g.size || !g.perfectClears) throw new Error('连击/完美记录未存档');
+});
+check('猫咪图鉴：解锁条件、存档与面板渲染', function () {
+  g.loadLevel(1);
+  g.unlockedCats = [];
+  g.bestTimes = { 5: 40, 10: 60, 15: 80, 20: 100, 25: 120, 30: 140, 35: 160, 45: 200, 60: 240 };
+  g.bestStars = { 1: 3, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3, 7: 2 };
+  g.bestCombo = 6;
+  g.perfectClears = 1;
+  const earned = g.checkCatUnlocks();
+  if (!earned.length) throw new Error('应解锁猫咪');
+  if (g.unlockedCats.length !== 12) throw new Error('应解锁全部12只，实际' + g.unlockedCats.length);
+  g.overlay = 'gallery';
+  drawnTexts.length = 0;
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s.indexOf('猫咪图鉴') >= 0; })) throw new Error('图鉴标题未绘制');
+  if (!drawnTexts.some(function (t) { return t.s === '橘座'; })) throw new Error('已解锁猫咪名未绘制');
+  g.closeOverlay();
+});
+
 g.stopTimer();
 console.log('\n通过：' + pass + ' / ' + total);
