@@ -17,6 +17,7 @@ function check(name, fn) {
 }
 
 function levelSize(level) {
+  if (level === 21) return 10; // 与游戏内 PREVIEW_10X10_LEVEL 保持一致
   return Math.min(4 + Math.floor((level - 1) / 3), 9);
 }
 

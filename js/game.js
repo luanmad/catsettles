@@ -9,6 +9,7 @@ const sound = require('../utils/sound.js');
 const DW = 750;
 const SAVE_KEY = 'catwhere_save_v2';
 const TOTAL_LEVELS = 60;
+const PREVIEW_10X10_LEVEL = 21; // 单关体验 10x10：设为 0 则关闭，其余关卡仍按 9x9 封顶
 const PALETTE = ['#f4756b', '#6fd8c6', '#f78fb3', '#c9a7f5', '#ffd166', '#7fb3f5', '#f5a35c', '#9fd977', '#2e8b8b', '#a66a3f'];
 const SYMBOLS = ['●', '▲', '■', '★', '◆', '♥', '✚', '♠', '▼', '◇'];
 const MAX_HEARTS = 3;
@@ -160,7 +161,10 @@ class Game {
     } catch (e) {}
   }
 
-  levelSize(level) { return Math.min(4 + Math.floor((level - 1) / 3), 9); }
+  levelSize(level) {
+    if (PREVIEW_10X10_LEVEL && level === PREVIEW_10X10_LEVEL) return 10;
+    return Math.min(4 + Math.floor((level - 1) / 3), 9);
+  }
   hintQuota(level) { return level <= 13 ? 1 : 2; }
 
   loadLevel(level) {
