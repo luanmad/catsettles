@@ -149,39 +149,58 @@ function isRegionConnected(region, n, regId) {
   return visited === count;
 }
 
-// 统计解的数量（最多数到 limit 个）；fixed 为已经放好的猫（列索引按行）
+// 统计解的数量（最多数到 limit 个）
+// fixed 为已放好的猫（{row,col}）；blocked 为禁止放猫的格子下标数组
 // 返回 { count, solutions }，solutions 中每项为"每行猫所在的列"
-function countSolutions(n, region, limit, fixed) {
+function countSolutions(n, region, limit, fixed, blocked) {
   const lim = limit || 2;
   const cols = new Array(n).fill(-1);
   const usedCols = new Array(n).fill(false);
   const usedRegions = new Array(n).fill(false);
   const solutions = [];
+  const blockedSet = {};
+  if (blocked) {
+    for (let i = 0; i < blocked.length; i++) blockedSet[blocked[i]] = true;
+  }
 
   const fixedCol = new Array(n).fill(-1);
   if (fixed) {
     for (let i = 0; i < fixed.length; i++) {
       const cat = fixed[i];
-      if (!cat || cat.row < 0 || cat.row >= n) continue;
+      if (!cat || cat.row < 0 || cat.row >= n || cat.col < 0 || cat.col >= n) continue;
       fixedCol[cat.row] = cat.col;
     }
   }
 
+  // 校验并登记预置猫：落在障碍格、同列、同区域或与上一行相邻则无解
+  for (let r = 0; r < n; r++) {
+    if (fixedCol[r] < 0) continue;
+    const c = fixedCol[r];
+    if (blockedSet[r * n + c]) return { count: 0, solutions: [] };
+    const reg = region[r * n + c];
+    if (reg === undefined || reg < 0 || usedRegions[reg]) return { count: 0, solutions: [] };
+    if (usedCols[c]) return { count: 0, solutions: [] };
+    if (r > 0 && fixedCol[r - 1] >= 0 && Math.abs(fixedCol[r - 1] - c) <= 1) {
+      return { count: 0, solutions: [] };
+    }
+    usedCols[c] = true;
+    usedRegions[reg] = true;
+    cols[r] = c;
+  }
+
   function backtrack(r) {
     if (solutions.length >= lim) return;
-    if (r === n) {
-      solutions.push(cols.slice());
-      return;
-    }
-    const only = fixedCol[r];
-    const start = only >= 0 ? only : 0;
-    const end = only >= 0 ? only : n - 1;
-    for (let c = start; c <= end; c++) {
+    if (r === n) { solutions.push(cols.slice()); return; }
+    if (fixedCol[r] >= 0) { backtrack(r + 1); return; }
+    for (let c = 0; c < n; c++) {
       if (usedCols[c]) continue;
-      const reg = region[r * n + c];
-      if (reg === undefined || reg < 0) continue;
-      if (usedRegions[reg]) continue;
+      const idx = r * n + c;
+      if (blockedSet[idx]) continue;
+      const reg = region[idx];
+      if (reg === undefined || reg < 0 || usedRegions[reg]) continue;
       if (r > 0 && Math.abs(cols[r - 1] - c) <= 1) continue;
+      // 下一行为预置猫时也要满足不相邻（含斜角）
+      if (r < n - 1 && fixedCol[r + 1] >= 0 && Math.abs(fixedCol[r + 1] - c) <= 1) continue;
       usedCols[c] = true;
       usedRegions[reg] = true;
       cols[r] = c;
@@ -198,8 +217,8 @@ function countSolutions(n, region, limit, fixed) {
 }
 
 // 根据当前局面求解，用于提示：返回一个可以安全放置的格子，找不到返回 null
-function nextHint(n, region, placedCats) {
-  const res = countSolutions(n, region, 1, placedCats);
+function nextHint(n, region, placedCats, blocked) {
+  const res = countSolutions(n, region, 1, placedCats, blocked);
   if (!res.count) return null;
   const solution = res.solutions[0];
   const used = {};
@@ -240,6 +259,60 @@ function generate(n, rand, options) {
   if (fallback) return fallback;
   const cats = generateCats(n, rand);
   return { cats: cats, region: generateRegions(n, cats, rand), unique: false, count: 0 };
+}
+
+// 生成带"障碍格/预置猫"的谜题：从一个已知解出发，
+// 障碍格只选非解格子，预置猫取自该解，因此解一定存在。
+// 参数 blockedCount=障碍格数量，presetCount=预置猫数量。
+// 返回 { cats, region, blocked, preset, count, unique }，preset 为 {row,col,region} 数组。
+function generateWithFeatures(n, rand, blockedCount, presetCount, options) {
+  const opts = options || {};
+  const maxCats = opts.maxCatsAttempts || 6;
+  const maxRegions = opts.maxRegionAttempts || 3;
+  let best = null;
+
+  const wantedBlocked = Math.max(0, Math.min(blockedCount || 0, n * n - n));
+  const wantedPreset = Math.max(0, Math.min(presetCount || 0, n - 1));
+
+  for (let a = 0; a < maxCats; a++) {
+    const cats = generateCats(n, rand);
+    if (!cats) continue;
+    for (let b = 0; b < maxRegions; b++) {
+      const region = generateRegions(n, cats, rand);
+
+      // 候选障碍格：所有非解格子
+      const solutionCells = {};
+      for (let i = 0; i < n; i++) solutionCells[cats[i].row * n + cats[i].col] = true;
+      const candidates = [];
+      for (let idx = 0; idx < n * n; idx++) if (!solutionCells[idx]) candidates.push(idx);
+      shuffle(candidates, rand);
+      const blocked = candidates.slice(0, wantedBlocked);
+
+      // 预置猫：从解里随机取若干只
+      const picked = shuffle(cats.slice(), rand).slice(0, wantedPreset);
+      const preset = picked.map(function (c) {
+        return { row: c.row, col: c.col, region: region[c.row * n + c.col] };
+      });
+      const fixedCols = picked.map(function (c) { return { row: c.row, col: c.col }; });
+
+      const res = countSolutions(n, region, 2, fixedCols, blocked);
+      const candidate = {
+        cats: cats, region: region, blocked: blocked, preset: preset,
+        count: res.count, unique: res.count === 1,
+      };
+      // 优先：有解 + 唯一解 + 障碍/预置数量满足要求
+      if (res.count >= 1 && res.unique) return candidate;
+      if (res.count >= 1 && (!best || (best.count !== 1 && res.count < best.count))) best = candidate;
+      if (res.count === 0 && !best) best = candidate;
+    }
+  }
+  if (best && best.count >= 1) return best;
+
+  // 兜底：无障碍无预置的普通谜题
+  const cats = generateCats(n, rand);
+  const region = generateRegions(n, cats, rand);
+  const res = countSolutions(n, region, 2);
+  return { cats: cats, region: region, blocked: [], preset: [], count: res.count, unique: res.count === 1 };
 }
 
 // 区域着色：优先保证每个区域颜色唯一（玩家按颜色识别区域），调色板不够时才退化为相邻不同色
@@ -308,4 +381,5 @@ module.exports = {
   nextHint: nextHint,
   assignColors: assignColors,
   generate: generate,
+  generateWithFeatures: generateWithFeatures,
 };

@@ -9,7 +9,6 @@ const sound = require('../utils/sound.js');
 const DW = 750;
 const SAVE_KEY = 'catwhere_save_v2';
 const TOTAL_LEVELS = 60;
-const PREVIEW_10X10_LEVEL = 21; // 单关体验 10x10：设为 0 则关闭，其余关卡仍按 9x9 封顶
 const PALETTE = ['#f4756b', '#6fd8c6', '#f78fb3', '#c9a7f5', '#ffd166', '#7fb3f5', '#f5a35c', '#9fd977', '#2e8b8b', '#a66a3f'];
 const SYMBOLS = ['●', '▲', '■', '★', '◆', '♥', '✚', '♠', '▼', '◇'];
 const MAX_HEARTS = 3;
@@ -60,6 +59,7 @@ class Game {
     let save = {};
     try { save = wx.getStorageSync(SAVE_KEY) || {}; } catch (e) {}
     this.bestTimes = save.bestTimes || {};
+    this.bestStars = save.bestStars || {}; // 每关最佳星级
     this.bestTotal = save.bestTotal || 0; // 历史最佳总通关用时
     this.maxLevel = Math.max(save.maxLevel || 1, 1);
     this.nickname = save.nickname || ('喵友' + String(1000 + Math.floor(Math.random() * 9000)));
@@ -152,6 +152,7 @@ class Game {
         level: nextLevel || this.level,
         maxLevel: this.maxLevel,
         bestTimes: this.bestTimes,
+        bestStars: this.bestStars,
         bestTotal: this.bestTotal,
         colorblind: this.colorblind,
         nickname: this.nickname,
@@ -161,37 +162,80 @@ class Game {
     } catch (e) {}
   }
 
-  levelSize(level) {
-    if (PREVIEW_10X10_LEVEL && level === PREVIEW_10X10_LEVEL) return 10;
-    return Math.min(4 + Math.floor((level - 1) / 3), 9);
+  // 难度曲线：4x4→10x10 逐级解锁；16关起逐步引入障碍格/预置猫/限时星级
+  // 返回 { size, blocked, preset, starEnabled, star3, star2 }
+  levelConfig(level) {
+    let size;
+    if (level <= 3) size = 4;
+    else if (level <= 6) size = 5;
+    else if (level <= 9) size = 6;
+    else if (level <= 12) size = 7;
+    else if (level <= 15) size = 8;
+    else if (level <= 30) size = 9;
+    else size = 10;
+
+    // 新机制从 16 关起分阶段引入
+    let blocked = 0, preset = 0, starEnabled = false;
+    if (level >= 16) starEnabled = true;        // 16关起按用时评星
+    if (level >= 19) preset = 1;                 // 19关起预置1只猫
+    if (level >= 22) blocked = 1;                // 22关起出现障碍格
+    if (level >= 26) { preset = 2; blocked = 2; }
+    if (level >= 34) { preset = 2; blocked = 3; }
+    if (level >= 44) { preset = 3; blocked = 4; }
+
+    // 星级时间阈值（秒）：棋盘越大越宽松；用时≤star3三星，≤star2二星，否则一星
+    const star3 = Math.round(size * size * 1.6 + 10);
+    const star2 = Math.round(star3 * 1.9);
+    return { size: size, blocked: blocked, preset: preset, starEnabled: starEnabled, star3: star3, star2: star2 };
   }
+
+  levelSize(level) { return this.levelConfig(level).size; }
   hintQuota(level) { return level <= 13 ? 1 : 2; }
 
   loadLevel(level) {
-    const size = this.levelSize(level);
+    const cfg = this.levelConfig(level);
+    const size = cfg.size;
     const rand = puzzle.rng(level * 1013904223 + 12345);
-    const gen = puzzle.generate(size, rand);
+    const gen = (cfg.blocked > 0 || cfg.preset > 0)
+      ? puzzle.generateWithFeatures(size, rand, cfg.blocked, cfg.preset)
+      : puzzle.generate(size, rand);
     const colorOf = puzzle.assignColors(gen.region, size, PALETTE);
     const symbols = puzzle.shuffle(SYMBOLS.slice(), rand);
 
+    // 障碍格集合：这些格子不能放猫，标记模式也不可标记
+    const blockedSet = {};
+    const blocked = gen.blocked || [];
+    for (let i = 0; i < blocked.length; i++) blockedSet[blocked[i]] = true;
+    // 预置猫：按 {row,col} 定位
+    const presetMap = {};
+    const preset = gen.preset || [];
+    for (let i = 0; i < preset.length; i++) presetMap[preset[i].row + ',' + preset[i].col] = true;
+
     const cells = [];
+    let presetCount = 0;
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
         const idx = r * size + c;
         const reg = gen.region[idx];
+        let state = 'empty';
+        if (blockedSet[idx]) state = 'blocked';
+        else if (presetMap[r + ',' + c]) { state = 'cat'; presetCount++; }
         cells.push({
           idx, row: r, col: c, region: reg,
           color: PALETTE[colorOf[reg]], symbol: symbols[reg],
-          state: 'empty', auto: false,
+          state: state, auto: false, preset: !!presetMap[r + ',' + c],
         });
       }
     }
     this.region = gen.region;
     this.cells = cells;
+    this.blockedSet = blockedSet;
+    this.blockedList = blocked;
+    this.levelConfigCur = cfg;
     this.level = level;
     this.size = size;
     this.maxLevel = Math.max(this.maxLevel || 1, level);
-    this.catsPlaced = 0;
+    this.catsPlaced = presetCount; // 预置猫计入已完成数量
     this.hearts = new Array(MAX_HEARTS).fill(1);
     this.markMode = false;
     this.hintsLeft = this.hintQuota(level);
@@ -300,6 +344,8 @@ class Game {
     if (this.suppressTap) { this.suppressTap = false; return; }
     const cell = this.cells[idx];
     if (!cell) return;
+    if (cell.state === 'blocked') { this.showToast('这个格子被挡住啦'); return; }
+    if (cell.preset) { this.showToast('这是预置小猫，不能移动'); return; }
 
     if (this.markMode) { this.toggleBan(idx); return; }
     if (cell.state === 'cat') {
@@ -320,7 +366,7 @@ class Game {
 
   toggleBan(idx) {
     const cell = this.cells[idx];
-    if (!cell) return;
+    if (!cell || cell.state === 'blocked' || cell.preset) return;
     this.pushHistory();
     if (cell.state === 'ban') {
       cell.state = 'empty'; cell.auto = false;
@@ -334,7 +380,8 @@ class Game {
 
   tryPlaceCat(idx) {
     const target = this.cells[idx];
-    const reason = rules.conflictReason(this.currentCats(), target);
+    if (!target || target.state === 'blocked') return;
+    const reason = rules.conflictReason(this.currentCats(), target, this.blockedList || []);
     if (reason) { this.penalize(target, reason); return; }
     this.pushHistory();
     target.state = 'cat';
@@ -387,11 +434,24 @@ class Game {
     if (!this.bestTotal || total < this.bestTotal) this.bestTotal = total;
     this.persist(Math.min(level + 1, this.maxLevel));
     // 结算页 4 项数据：本关用时、总通关用时、最佳本关、最佳总通关
+    // 星级：16关起启用，按本关用时评定（3星最快），存档记录每关最佳星级
+    let stars = 0;
+    const cfg = this.levelConfigCur || this.levelConfig(level);
+    if (cfg.starEnabled) {
+      stars = used <= cfg.star3 ? 3 : (used <= cfg.star2 ? 2 : 1);
+      if (!this.bestStars) this.bestStars = {};
+      if ((this.bestStars[level] || 0) < stars) {
+        this.bestStars[level] = stars;
+        this.persist(Math.min(level + 1, this.maxLevel));
+      }
+    }
     this.winStats = {
       single: used,
       total: total,
       bestSingle: this.bestTimes[level],
       bestTotal: this.bestTotal,
+      stars: stars,
+      starEnabled: cfg.starEnabled,
     };
     this.submitScore(level, total, used);
     this.reportFriendScore(level, total, used);
@@ -433,7 +493,7 @@ class Game {
     if (this.won || this.overlay) return;
     if (this.hintsLeft <= 0) { this.showToast('本关提示已用完'); return; }
     const cats = this.currentCats();
-    const hint = puzzle.nextHint(this.size, this.region, cats);
+    const hint = puzzle.nextHint(this.size, this.region, cats, this.blockedSet ? Object.keys(this.blockedSet).map(Number) : null);
     if (!hint) { this.showToast('当前摆法走不通，先撤掉几只小猫吧', 2000); return; }
     const idx = hint.row * this.size + hint.col;
     this.pushHistory();
@@ -449,18 +509,25 @@ class Game {
     if (this.won || this.overlay) return;
     let hasAny = false;
     for (let i = 0; i < this.cells.length; i++) {
-      if (this.cells[i].state !== 'empty') { hasAny = true; break; }
+      const c = this.cells[i];
+      // 预置猫和障碍格不可被清除
+      if (c.state === 'cat' && !c.preset) { hasAny = true; break; }
+      if (c.state === 'ban') { hasAny = true; break; }
     }
     if (!hasAny) return;
     this.pushHistory();
-    for (let i = 0; i < this.cells.length; i++) this.cells[i].state = 'empty';
-    this.catsPlaced = 0;
+    for (let i = 0; i < this.cells.length; i++) {
+      const c = this.cells[i];
+      if (c.preset || c.state === 'blocked') continue;
+      c.state = 'empty'; c.auto = false;
+    }
+    this.catsPlaced = this.cells.filter(function (c) { return c.preset && c.state === 'cat'; }).length;
   }
 
   // 拖拽批量标记：一次拖拽算一步历史，可一次撤销
   beginDragMark(idx) {
     const cell = this.cells[idx];
-    if (!cell) return false;
+    if (!cell || cell.state === 'blocked' || cell.preset) return false;
     const target = (cell.state === 'ban') ? 'empty' : 'ban';
     this.pushHistory();
     this.dragMark = { target: target, visited: {}, soundPlayed: false };
@@ -473,7 +540,7 @@ class Game {
     const d = this.dragMark;
     if (!d || d.visited[idx]) return;
     const cell = this.cells[idx];
-    if (!cell) return;
+    if (!cell || cell.state === 'blocked' || cell.preset) return;
     d.visited[idx] = true;
     if (d.target === 'ban') {
       if (cell.state === 'cat') this.catsPlaced -= 1;
@@ -743,7 +810,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。放错会扣一颗爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。放错会扣一颗爱心，爱心用完要重玩本关。单击格子放猫或移除；按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。第16关起按用时评1-3星；后续关卡会出现紫色预置小猫（不可移动）和深色障碍格（不能放猫）。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -843,14 +910,22 @@ class Game {
       const cell = this.cells[i];
       const x = bx + gap + cell.col * (cs + gap);
       const y = by + gap + cell.row * (cs + gap);
-      r.fillRoundRect(x, y, cs, cs, 10, cell.color);
 
-      if (cell.state === 'cat') {
-        r.cat(x + cs / 2, y + cs / 2 + 2, cs * 0.72, cell.auto ? C.greenDeep : C.text);
-      } else if (cell.state === 'ban') {
-        this.drawCross(x + cs / 2, y + cs / 2 + 1, L.cellFontSmall, '#ffffff', cell.auto);
-      } else if (this.colorblind) {
-        r.textShadow(cell.symbol, x + cs / 2, y + cs / 2 + 1, L.cellFontTiny, '#ffffff', 'center', 'middle', 'rgba(0,0,0,0.35)', 3);
+      if (cell.state === 'blocked') {
+        // 障碍格：深色底 + 斜纹 + 锁标记，和普通格子明显区分
+        r.fillRoundRect(x, y, cs, cs, 10, '#5a6279');
+        r.fillRoundRect(x + cs * 0.18, y + cs * 0.18, cs * 0.64, cs * 0.64, 8, 'rgba(0,0,0,0.22)');
+        r.text('✕', x + cs / 2, y + cs / 2 + 1, L.cellFontSmall, '#ffffff', 'center', 'middle', 'bold');
+      } else {
+        r.fillRoundRect(x, y, cs, cs, 10, cell.color);
+        if (cell.state === 'cat') {
+          r.cat(x + cs / 2, y + cs / 2 + 2, cs * 0.72, cell.auto ? C.greenDeep : (cell.preset ? '#7a5cff' : C.text));
+          if (cell.preset) r.text('锁', x + cs - 12, y + 14, Math.max(11, L.cellFontTiny * 0.8), '#7a5cff', 'center', 'middle', 'bold');
+        } else if (cell.state === 'ban') {
+          this.drawCross(x + cs / 2, y + cs / 2 + 1, L.cellFontSmall, '#ffffff', cell.auto);
+        } else if (this.colorblind) {
+          r.textShadow(cell.symbol, x + cs / 2, y + cs / 2 + 1, L.cellFontTiny, '#ffffff', 'center', 'middle', 'rgba(0,0,0,0.35)', 3);
+        }
       }
 
       r.addHit(x, y, cs, cs, null, { idx: i, longPress: true, onTap: () => this.onCellTap(i) });
@@ -930,6 +1005,8 @@ class Game {
       r.fillRoundRect(x, y, cellW, cellW, 12, bg);
       r.text(String(lv), x + cellW / 2, y + cellW / 2, 28, locked ? C.subText : '#ffffff', 'center', 'middle', 'bold');
       if (done) r.text('✓', x + cellW - 18, y + 16, 18, '#ffffff', 'center', 'middle');
+      const lvStars = this.bestStars && this.bestStars[lv];
+      if (lvStars) r.text('★', x + 16, y + cellW - 14, 18, '#ffd166', 'center', 'middle', 'bold');
       if (!locked) r.addHit(x, y, cellW, cellW, null, { onTap: () => this.loadLevel(lv) });
     }
     r.restore();
@@ -1057,7 +1134,13 @@ class Game {
     r.addHit(0, 0, r.DW, r.DH, null, { onTap: () => {} });
     const cw = 560;
     const hasNew = !!this.isNewBest;
-    const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0);
+    const ws = this.winStats || {
+      single: this.seconds, total: this.totalTime(),
+      bestSingle: this.bestTimes[this.level], bestTotal: this.bestTotal,
+      stars: 0, starEnabled: false,
+    };
+    const showStars = !!ws.starEnabled;
+    const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0) + (showStars ? 62 : 0);
     const y = Math.max(20, (r.DH - ch) / 2);
     const x = (r.DW - cw) / 2;
     r.fillRoundRect(x, y, cw, ch, 32, C.card);
@@ -1065,12 +1148,14 @@ class Game {
     r.text('第' + this.level + '关通过！', r.DW / 2, y + 180, 40, C.text, 'center', 'middle', 'bold');
     r.text(this.allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦',
       r.DW / 2, y + 226, 22, C.subText, 'center', 'middle');
+    if (showStars) {
+      const stars = ws.stars || 0;
+      for (let i = 0; i < 3; i++) {
+        r.text('★', r.DW / 2 + (i - 1) * 56, y + 262, 44, i < stars ? C.orange : C.border, 'center', 'middle', 'bold');
+      }
+    }
     // 统计四宫格：本关用时 / 总通关用时 / 最佳本关 / 最佳总通关
-    const ws = this.winStats || {
-      single: this.seconds, total: this.totalTime(),
-      bestSingle: this.bestTimes[this.level], bestTotal: this.bestTotal,
-    };
-    const sy = y + 278;
+    const sy = y + 278 + (showStars ? 62 : 0);
     const boxH = 168;
     r.fillRoundRect(x + 50, sy, cw - 100, boxH, 20, C.lightBg);
     r.fillRect(x + cw / 2 - 1, sy + 16, 2, boxH - 32, C.border);
@@ -1184,7 +1269,7 @@ class Game {
         { label: '音效：' + (this.soundOn ? '开' : '关'), tap: () => { this.soundOn = !this.soundOn; sound.setEnabled(this.soundOn); if (this.soundOn) sound.play('tap'); this.persist(); } },
         { label: '重置进度', tap: () => { this.dialog = {
           title: '重置进度', content: '确定要清空关卡进度和成绩吗？', confirm: '确定重置', showCancel: true,
-          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestTotal = 0; this.loadLevel(1); },
+          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestTotal = 0; this.loadLevel(1); },
         }; } },
         { label: '好友排行榜', tap: () => { this.overlay = 'friendRank'; this.friendRankActive = false; } },
         { label: '排行榜', tap: () => { this.overlay = 'rank'; this.refreshRank(); } },

@@ -122,8 +122,8 @@ check('初始化布局与首帧渲染', function () {
   if (!g.layout) throw new Error('layout 未计算');
   if (g.size !== 4 || g.level !== 1) throw new Error('初始关卡错误');
 });
-check('关卡尺寸与提示分档：16关起9x9封顶、13关提示分界', function () {
-  const cases = [[1, 4], [3, 4], [4, 5], [12, 7], [13, 8], [15, 8], [16, 9], [18, 9], [20, 9], [21, 10], [22, 9], [60, 9]];
+check('难度曲线：尺寸递进到10x10、提示分档、新机制按关引入', function () {
+  const cases = [[1, 4], [3, 4], [4, 5], [12, 7], [13, 8], [15, 8], [16, 9], [30, 9], [31, 10], [60, 10]];
   cases.forEach(function (pair) {
     if (g.levelSize(pair[0]) !== pair[1]) {
       throw new Error('第' + pair[0] + '关尺寸应为' + pair[1] + '，实际' + g.levelSize(pair[0]));
@@ -135,6 +135,11 @@ check('关卡尺寸与提示分档：16关起9x9封顶、13关提示分界', fun
   [14, 21, 60].forEach(function (lv) {
     if (g.hintQuota(lv) !== 2) throw new Error('第' + lv + '关提示应为2次');
   });
+  const c15 = g.levelConfig(15), c16 = g.levelConfig(16), c19 = g.levelConfig(19), c22 = g.levelConfig(22);
+  if (c15.starEnabled) throw new Error('15关不应启用星级');
+  if (!c16.starEnabled) throw new Error('16关应启用星级');
+  if (c16.preset !== 0 || c19.preset !== 1) throw new Error('预置猫引入关卡错误');
+  if (c19.blocked !== 0 || c22.blocked !== 1) throw new Error('障碍格引入关卡错误');
 });
 check('9x9关卡：颜色与符号覆盖全部9个区域，无越界', function () {
   g.loadLevel(16);
@@ -155,9 +160,9 @@ check('9x9关卡：颜色与符号覆盖全部9个区域，无越界', function 
     usedColors[colors[reg]] = true;
   }
 });
-check('10x10体验关：谜题有解、10个区域颜色符号无越界无重复', function () {
-  g.loadLevel(21);
-  if (g.size !== 10) throw new Error('第21关不是10x10');
+check('10x10关卡：谜题有解、10个区域颜色符号无越界无重复', function () {
+  g.loadLevel(31);
+  if (g.size !== 10) throw new Error('第31关不是10x10');
   g.render();
   const colors = {}, seen = {};
   for (let i = 0; i < g.cells.length; i++) {
@@ -171,6 +176,44 @@ check('10x10体验关：谜题有解、10个区域颜色符号无越界无重复
     if (seen[colors[reg]]) throw new Error('不同区域出现同色: ' + colors[reg]);
     seen[colors[reg]] = true;
   }
+});
+check('障碍格与预置猫：数量正确、不可点击、不参与清除', function () {
+  g.loadLevel(26);
+  const cfg = g.levelConfig(26);
+  const blocks = g.cells.filter(function (c) { return c.state === 'blocked'; });
+  const presets = g.cells.filter(function (c) { return c.preset && c.state === 'cat'; });
+  if (blocks.length !== cfg.blocked) throw new Error('障碍格数量错误: ' + blocks.length);
+  if (presets.length !== cfg.preset) throw new Error('预置猫数量错误: ' + presets.length);
+  if (g.catsPlaced !== cfg.preset) throw new Error('预置猫未计入已放数量');
+  // 点击障碍格/预置猫不改变状态
+  const bIdx = blocks[0].idx, pIdx = presets[0].idx;
+  g.onCellTap(bIdx); g.onCellTap(pIdx);
+  if (g.cells[bIdx].state !== 'blocked') throw new Error('障碍格被点击改变');
+  if (g.cells[pIdx].state !== 'cat') throw new Error('预置猫被点击移除');
+  // 清除后预置猫和障碍格仍在
+  g.onClear();
+  if (g.cells[bIdx].state !== 'blocked') throw new Error('清除后障碍格丢失');
+  if (g.cells[pIdx].state !== 'cat') throw new Error('清除后预置猫丢失');
+  if (g.catsPlaced !== cfg.preset) throw new Error('清除后预置猫计数错误');
+  g.render();
+});
+check('星级评定：16关起按用时评1-3星并存档', function () {
+  g.loadLevel(16);
+  const cfg = g.levelConfigCur;
+  if (!cfg.starEnabled) throw new Error('16关星级未启用');
+  // 快速用时得三星
+  g.seconds = 0;
+  g.winStats = null;
+  g.finishLevel();
+  if (!g.winStats || g.winStats.stars !== 3) throw new Error('快速通关应为3星，实际' + (g.winStats && g.winStats.stars));
+  if (!g.bestStars || g.bestStars[16] !== 3) throw new Error('星级未存档');
+  // 慢速用时得三星以外的低星（重新载入）
+  g.loadLevel(16);
+  g.seconds = cfg.star2 + 10;
+  g.finishLevel();
+  if (g.winStats.stars !== 1) throw new Error('超时通关应为1星，实际' + g.winStats.stars);
+  if (g.bestStars[16] !== 3) throw new Error('最佳星级被低星覆盖');
+  g.render();
 });
 check('绘制各浮层无异常', function () {
   g.overlay = 'levels'; g.render();
