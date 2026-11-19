@@ -263,6 +263,89 @@ check('checkSolved：错位解不算通关', function () {
   assert.strictEqual(rules.checkSolved(cats, 4), false);
 });
 
+// 4. 对角线约束（第40关起精英关）
+function buildEliteLevel(level) {
+  const size = levelSize(level);
+  const rand = puzzle.rng(seedOf(level) + 7777);
+  return { size: size, gen: puzzle.generate(size, rand, { diagonal: true }) };
+}
+
+check('精英关谜题：40-60关有解且解满足对角线约束', function () {
+  for (let level = 40; level <= 60; level++) {
+    const built = buildEliteLevel(level);
+    const size = built.size;
+    if (built.gen.count < 1) throw new Error('第' + level + '关对角线规则下无解');
+    const cats = catsOf(built.gen, size);
+    if (!rules.checkSolved(cats, size, { diagonal: true })) {
+      throw new Error('第' + level + '关解不满足对角线约束');
+    }
+    for (let i = 0; i < cats.length; i++) {
+      for (let j = i + 1; j < cats.length; j++) {
+        if (rules.isDiagonal(cats[i], cats[j])) {
+          throw new Error('第' + level + '关存在同对角线的猫');
+        }
+      }
+    }
+  }
+});
+
+check('冲突检测：对角线冲突只在精英规则下拦截', function () {
+  const cats = [{ row: 0, col: 0, region: 0 }];
+  assert.strictEqual(rules.conflictReason(cats, { row: 3, col: 3, region: 2 }), '');
+  assert.strictEqual(rules.conflictReason(cats, { row: 3, col: 3, region: 2 }, { diagonal: true }), rules.REASON_DIAG);
+  assert.strictEqual(rules.conflictReason(cats, { row: 2, col: 2, region: 2 }, { diagonal: true }), rules.REASON_DIAG);
+  const catsB = [{ row: 0, col: 5, region: 0 }];
+  assert.strictEqual(rules.conflictReason(catsB, { row: 3, col: 2, region: 2 }, { diagonal: true }), rules.REASON_DIAG);
+});
+
+check('checkSolved：精英规则拒绝对角线冲突的摆法', function () {
+  const cats = [
+    { row: 0, col: 0, region: 0 },
+    { row: 1, col: 3, region: 1 },
+    { row: 2, col: 1, region: 2 },
+    { row: 3, col: 4, region: 3 },
+    { row: 4, col: 2, region: 4 },
+    { row: 5, col: 5, region: 5 },
+  ];
+  assert.strictEqual(rules.checkSolved(cats, 6), true, '旧规则下应合法');
+  assert.strictEqual(rules.checkSolved(cats, 6, { diagonal: true }), false, '精英规则下应对角线冲突');
+});
+
+check('求解器：对角线规则下所有解都是N皇后解', function () {
+  const size = 6;
+  const region = new Array(size * size);
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) region[r * size + c] = r;
+  }
+  const res = puzzle.countSolutions(size, region, 200, null, null, { diagonal: true });
+  assert.ok(res.count > 0, '6皇后应可解');
+  res.solutions.forEach(function (cols) {
+    for (let r = 0; r < size; r++) {
+      for (let rr = r + 1; rr < size; rr++) {
+        assert.notStrictEqual(Math.abs(r - rr), Math.abs(cols[r] - cols[rr]), '解含对角线冲突: ' + cols.join(','));
+      }
+    }
+  });
+  const plain = puzzle.countSolutions(size, region, 500);
+  assert.ok(plain.count > res.count, '对角线约束应减少解数量');
+});
+
+check('提示：精英关按对角线规则可走完整关', function () {
+  for (let level = 40; level <= 44; level++) {
+    const built = buildEliteLevel(level);
+    const size = built.size;
+    const placed = [];
+    for (let step = 0; step < size; step++) {
+      const hint = puzzle.nextHint(size, built.gen.region, placed, null, { diagonal: true });
+      assert.ok(hint, '第' + level + '关第' + step + '步无提示');
+      const cat = { row: hint.row, col: hint.col, region: built.gen.region[hint.row * size + hint.col] };
+      assert.strictEqual(rules.conflictReason(placed, cat, { diagonal: true }), '', '提示位置冲突');
+      placed.push(cat);
+    }
+    assert.ok(rules.checkSolved(placed, size, { diagonal: true }), '按提示没走通');
+  }
+});
+
 const total = Date.now() - started;
 console.log('通过用例：' + passed + ' / ' + (passed + failures.length));
 console.log('生成 ' + LEVELS + ' 关总耗时：' + total + 'ms，平均 ' + Math.round(total / LEVELS) + 'ms/关');

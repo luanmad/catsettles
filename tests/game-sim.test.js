@@ -12,6 +12,7 @@ function ctxMock() {
     arcTo: noop, closePath: noop, fill: noop, stroke: noop, fillRect: noop,
     fillText: function (s, x, y) { drawnTexts.push({ s: String(s), x: x, y: y }); },
     arc: noop, bezierCurveTo: noop, quadraticCurveTo: noop, ellipse: noop,
+    setLineDash: noop,
     save: noop, restore: noop, translate: noop, scale: noop, rotate: noop, rect: noop, clip: noop,
     measureText: function (s) { return { width: String(s).length * 12 }; },
     set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {}, set font(v) {},
@@ -123,18 +124,25 @@ check('初始化布局与首帧渲染', function () {
   if (!g.layout) throw new Error('layout 未计算');
   if (g.size !== 4 || g.level !== 1) throw new Error('初始关卡错误');
 });
-check('难度曲线：尺寸递进到10x10、提示1次、生命2条、16关起评星', function () {
+check('难度曲线：尺寸递进到10x10、40关起精英关、生命2条、16关起评星', function () {
   const cases = [[1, 4], [3, 4], [4, 5], [12, 7], [13, 8], [15, 8], [16, 9], [30, 9], [31, 10], [60, 10]];
   cases.forEach(function (pair) {
     if (g.levelSize(pair[0]) !== pair[1]) {
       throw new Error('第' + pair[0] + '关尺寸应为' + pair[1] + '，实际' + g.levelSize(pair[0]));
     }
   });
-  [1, 6, 13, 14, 21, 60].forEach(function (lv) {
+  [1, 6, 13, 14, 21, 39].forEach(function (lv) {
     if (g.hintQuota(lv) !== 1) throw new Error('第' + lv + '关提示应为1次');
   });
+  [40, 41, 60].forEach(function (lv) {
+    if (g.hintQuota(lv) !== 0) throw new Error('第' + lv + '关提示应为0次');
+    if (g.undoQuota(lv) !== 0) throw new Error('第' + lv + '关撤销应为0次');
+    if (!g.levelConfig(lv).diagonal || !g.levelConfig(lv).elite) {
+      throw new Error('第' + lv + '关应启用对角线与精英规则');
+    }
+  });
   if (g.hearts.length !== 2) throw new Error('初始生命值应为2条');
-  [1, 26, 60].forEach(function (lv) {
+  [1, 26, 39].forEach(function (lv) {
     g.loadLevel(lv);
     if (g.hearts.length !== 2 || g.hearts.some(function (v) { return !v; })) {
       throw new Error('第' + lv + '关生命值应为2条满血');
@@ -202,13 +210,18 @@ check('棋盘无禁放格：所有格子初始可放、可标记、清除后全�
   }
   g.render();
 });
-check('16-60关：纯棋盘均有解且无禁放状态', function () {
+check('16-60关：棋盘有解，57关起才允许石像猫', function () {
   const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
   for (let lv = 16; lv <= 60; lv++) {
     g.loadLevel(lv);
-    const bad = g.cells.filter(function (c) { return c.state !== 'empty'; }).length;
-    if (bad) throw new Error('第' + lv + '关存在非空格子: ' + bad);
-    const res = puzzleLib.countSolutions(g.size, g.region, 1);
+    const stones = g.cells.filter(function (c) { return c.state === 'stone'; }).length;
+    const expectStones = lv >= 59 ? 3 : (lv >= 57 ? 2 : 0);
+    if (stones !== expectStones) throw new Error('第' + lv + '关石像猫应为' + expectStones + '，实际' + stones);
+    const other = g.cells.filter(function (c) { return c.state !== 'empty' && c.state !== 'stone'; }).length;
+    if (other) throw new Error('第' + lv + '关存在非预置的格子: ' + other);
+    const stoneObs = g.stones || [];
+    const opts = lv >= 40 ? { diagonal: true, stones: stoneObs } : { stones: stoneObs };
+    const res = puzzleLib.countSolutions(g.size, g.region, 1, null, null, opts);
     if (!res.count) throw new Error('第' + lv + '关无解');
   }
 });
@@ -690,6 +703,336 @@ check('通关演示：入口、逐步展示、通关文案与退出', function (
   drawnTexts.length = 0;
   g.render();
   if (drawnTexts.some(function (t) { return t.s === '通关演示'; })) throw new Error('退出后仍在演示画面');
+});
+
+check('第40关起精英关：对角线约束、0提示0撤销、玩法变更只通知一次', function () {
+  const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
+  const rulesLib = require(path.join(__dirname, '..', 'utils', 'rules.js'));
+  g.eliteNoticed = false;
+  g.dialog = null;
+
+  // 第39关仍是旧规则
+  g.loadLevel(39);
+  if (g.levelConfigCur.diagonal || g.levelConfigCur.elite) throw new Error('第39关不应启用对角线/精英规则');
+  if (g.hintQuota(39) !== 1 || g.undoQuota(39) !== 3) throw new Error('第39关应为1提示3撤销');
+  if (g.dialog) throw new Error('第39关不应弹玩法变更通知');
+
+  // 第40关首次进入：通知 + 0提示0撤销
+  g.loadLevel(40);
+  if (!g.levelConfigCur.diagonal || !g.levelConfigCur.elite) throw new Error('第40关应启用对角线/精英规则');
+  if (g.hintsLeft !== 0 || g.undosLeft !== 0) throw new Error('第40关应为0提示0撤销');
+  if (!g.dialog || g.dialog.title.indexOf('精英关') < 0) throw new Error('第40关未弹玩法变更通知');
+  if (g.dialog.content.indexOf('对角线') < 0 || g.dialog.content.indexOf('提示') < 0 || g.dialog.content.indexOf('撤销') < 0) {
+    throw new Error('玩法通知缺少规则说明');
+  }
+  drawnTexts.length = 0;
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s.indexOf('玩法升级') >= 0; })) throw new Error('未绘制玩法通知标题');
+  if (!drawnTexts.some(function (t) { return t.s === '精英'; })) throw new Error('标题栏缺少精英标记');
+  if (!drawnTexts.some(function (t) { return t.s.indexOf('同对角线') >= 0; })) throw new Error('规则卡片未提示对角线');
+  g.dialog = null;
+
+  // 再次进入同一关、或进入后续精英关，都不再重复通知
+  g.loadLevel(40);
+  if (g.dialog) throw new Error('玩法通知不应重复弹出');
+  g.loadLevel(41);
+  if (g.dialog) throw new Error('后续精英关不应重复通知');
+  if (storage.catwhere_save_v2.eliteNoticed !== true) throw new Error('通知已读状态未存档');
+
+  // 精英关：提示、撤销、清除、取消都不能用
+  g.loadLevel(40, 4242);
+  g.dialog = null;
+  const beforeCats = g.catsPlaced;
+  g.onHint();
+  if (g.catsPlaced !== beforeCats) throw new Error('精英关不应能用提示');
+  g.onUndo();
+  g.onClear();
+  if (g.undosLeft !== 0) throw new Error('精英关撤销次数应始终为0');
+
+  // 对角线冲突：旧规则放行，精英规则拦截并扣爱心
+  const resForDiag = puzzleLib.countSolutions(g.size, g.region, 1, null, null, { diagonal: true });
+  if (!resForDiag.count) throw new Error('第40关对角线规则下无解');
+  const colsDiag = resForDiag.solutions[0];
+  const first = { row: 0, col: colsDiag[0], region: g.cells[colsDiag[0]].region };
+  let badIdx = -1;
+  for (let dr = 2; dr < g.size && badIdx < 0; dr++) {
+    for (let sign = -1; sign <= 1; sign += 2) {
+      const dc = colsDiag[0] + sign * dr;
+      if (dc < 0 || dc >= g.size) continue;
+      const idx = dr * g.size + dc;
+      const cell = g.cells[idx];
+      const t = { row: cell.row, col: cell.col, region: cell.region };
+      if (rulesLib.conflictReason([first], t, { diagonal: true }) === rulesLib.REASON_DIAG) { badIdx = idx; break; }
+    }
+  }
+  if (badIdx < 0) throw new Error('未找到纯对角线冲突格');
+  g.onCellTap(colsDiag[0]); // 先放下首行猫，再尝试同对角线位置
+  if (g.cells[colsDiag[0]].state !== 'cat') throw new Error('首行猫未放下');
+  const heartsBefore = g.hearts.filter(function (v) { return v; }).length;
+  g.onCellTap(badIdx);
+  if (g.hearts.filter(function (v) { return v; }).length !== heartsBefore - 1) {
+    throw new Error('对角线冲突应扣1颗爱心');
+  }
+
+  // 按对角线规则求解，可一步步通关，且最终摆法满足对角线约束
+  g.loadLevel(40, 4242);
+  g.dialog = null;
+  const res = puzzleLib.countSolutions(g.size, g.region, 1, null, null, { diagonal: true });
+  if (!res.count) throw new Error('第40关无解');
+  const cols = res.solutions[0];
+  const placed = [];
+  for (let r = 0; r < g.size; r++) {
+    const idx = r * g.size + cols[r];
+    g.onCellTap(idx);
+    const cell = g.cells[idx];
+    placed.push({ row: cell.row, col: cell.col, region: cell.region });
+  }
+  if (!g.won) throw new Error('按对角线解摆放后未通关: ' + g.catsPlaced + '/' + g.size);
+  if (!rulesLib.checkSolved(placed, g.size, { diagonal: true })) throw new Error('通关摆法不满足对角线约束');
+  g.dialog = null;
+});
+
+check('精英关虚线提示：占位猫画出两条对角线，冲突提示写明冲突位置', function () {
+  const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
+  const rulesLib = require(path.join(__dirname, '..', 'utils', 'rules.js'));
+  g.loadLevel(40, 4242);
+  g.dialog = null;
+
+  // 拦截虚线绘制，记录次数与端点
+  const realDash = g.r.dashedLine;
+  const calls = [];
+  g.r.dashedLine = function (x1, y1, x2, y2) { calls.push([x1, y1, x2, y2]); };
+
+  const res = puzzleLib.countSolutions(g.size, g.region, 1, null, null, { diagonal: true });
+  const cols = res.solutions[0];
+  g.onCellTap(cols[0]); // 首行放一只猫
+  drawnTexts.length = 0;
+  calls.length = 0;
+  g.render();
+  if (calls.length !== 2) throw new Error('一只猫应画出主/副两条对角线虚线，实际 ' + calls.length);
+  const step = g.layout.cellSize + 8;
+  calls.forEach(function (seg) {
+    const dr = Math.abs(seg[3] - seg[1]) / step;
+    const dc = Math.abs(seg[2] - seg[0]) / step;
+    if (Math.abs(dr - dc) > 0.01) throw new Error('虚线端点不在45度对角线上: 行差' + dr + ' 列差' + dc);
+  });
+
+  // 找一个同对角线、不同色区域、距离>=2 的格子，验证提示写明冲突位置
+  const firstRow = 0, firstCol = cols[0];
+  let badIdx = -1;
+  for (let rr = 2; rr < g.size && badIdx < 0; rr++) {
+    for (let sign = -1; sign <= 1; sign += 2) {
+      const cc = firstCol + sign * rr;
+      if (cc < 0 || cc >= g.size) continue;
+      const idx = rr * g.size + cc;
+      const cell = g.cells[idx];
+      if (cell.region === g.cells[firstCol].region) continue;
+      if (rulesLib.conflictReason([{ row: firstRow, col: firstCol, region: g.cells[firstCol].region }],
+        { row: cell.row, col: cell.col, region: cell.region }, { diagonal: true }) === rulesLib.REASON_DIAG) {
+        badIdx = idx; break;
+      }
+    }
+  }
+  if (badIdx >= 0) {
+    g.onCellTap(badIdx);
+    if (!g.toast || g.toast.text.indexOf('行第') < 0 || g.toast.text.indexOf('列的小猫') < 0) {
+      throw new Error('对角线冲突提示未写明冲突小猫位置: ' + (g.toast && g.toast.text));
+    }
+  }
+
+  // 仅 40-43 显示虚线，44 关起不再显示（对角线规则本身仍生效）
+  [39, 40, 41, 42, 43].forEach(function (lv) {
+    g.loadLevel(lv, 4242);
+    g.dialog = null;
+    const r = puzzleLib.countSolutions(g.size, g.region, 1, null, null, { diagonal: true });
+    if (!r.count) return;
+    g.onCellTap(r.solutions[0][0]);
+    calls.length = 0;
+    g.render();
+    const want = (lv >= 40 && lv <= 43) ? 2 : 0;
+    if (calls.length !== want) throw new Error('第' + lv + '关虚线数应为' + want + '，实际' + calls.length);
+  });
+  [44, 45].forEach(function (lv) {
+    g.loadLevel(lv, 4242);
+    g.dialog = null;
+    if (!g.levelConfigCur.diagonal) throw new Error('第' + lv + '关仍应为对角线精英关');
+    const r = puzzleLib.countSolutions(g.size, g.region, 1, null, null, { diagonal: true });
+    if (!r.count) return;
+    g.onCellTap(r.solutions[0][0]);
+    calls.length = 0;
+    g.render();
+    if (calls.length !== 0) throw new Error('第' + lv + '关不应显示虚线，实际' + calls.length);
+  });
+
+  g.r.dashedLine = realDash;
+  g.dialog = null;
+});
+
+check('临时体验：39-60关可在选关面板直接进入，且不污染正式解锁进度', function () {
+  const before = g.maxLevel;
+  g.maxLevel = 1;
+  g.eliteNoticed = true;
+  g.hardNoticed = true;
+  g.dialog = null;
+  g.listScroll.levels = 0;
+
+  [39, 40, 45, 50, 57, 60].forEach(function (lv) {
+    if (!g.isTempUnlocked(lv)) throw new Error('第' + lv + '关应临时开放');
+  });
+  [1, 38].forEach(function (lv) {
+    if (g.isTempUnlocked(lv)) throw new Error('第' + lv + '关不应临时开放');
+  });
+
+  // 选关面板：第42关即使未解锁也可点进去
+  g.overlay = 'levels';
+  g.render();
+  const px = 40, py = 120, pw = g.r.DW - 80;
+  const cellW = 70, gap = 12, cols = 8;
+  const startX = px + (pw - (cols * cellW + (cols - 1) * gap)) / 2;
+  const i = 41; // 第42关
+  const cx = startX + (i % cols) * (cellW + gap) + cellW / 2;
+  const cy = py + 96 + Math.floor(i / cols) * (cellW + gap) + cellW / 2;
+  tap(cx, cy);
+  if (g.level !== 42) throw new Error('临时体验关在选关面板不可进入: ' + g.level);
+  if (g.maxLevel !== 1) throw new Error('体验关加载污染了正式进度: ' + g.maxLevel);
+
+  // 通关体验关也不解锁下一关
+  g.stopTimer(); g.seconds = 0; g.winStats = null;
+  g.finishLevel();
+  if (g.maxLevel !== 1) throw new Error('通关体验关污染了正式进度: ' + g.maxLevel);
+
+  g.maxLevel = before;
+  g.overlay = null;
+  g.dialog = null;
+});
+
+check('50-56关玩法梯度：一线生机、静默禁标记、首次升级通知', function () {
+  g.hardNoticed = false;
+  g.dialog = null;
+
+  g.loadLevel(49);
+  g.dialog = null;
+  if (g.hearts.length !== 2 || g.levelConfigCur.noMark) throw new Error('第49关应2爱心且可标记');
+
+  g.loadLevel(50);
+  if (g.hearts.length !== 1 || !g.levelConfigCur.oneHeart) throw new Error('第50关应只有1颗爱心');
+  if (!g.dialog || g.dialog.title.indexOf('一线生机') < 0) throw new Error('第50关未弹升级通知');
+  if (g.dialog.content.indexOf('禁标记') < 0 || g.dialog.content.indexOf('石像') < 0 || g.dialog.content.indexOf('倒计时') < 0) {
+    throw new Error('升级通知未说明后续玩法');
+  }
+  // 通知只弹一次（清掉当前弹窗后再进下一关）
+  g.dialog = null;
+  g.loadLevel(51);
+  if (g.dialog) throw new Error('玩法升级通知不应重复弹出');
+
+  g.loadLevel(53);
+  if (g.hearts.length !== 1 || g.levelConfigCur.noMark) throw new Error('第53关应1爱心且可标记');
+  g.loadLevel(54);
+  if (!g.levelConfigCur.noMark) throw new Error('第54关应禁用标记');
+  if (g.markMode) throw new Error('静默关不应保持标记模式');
+
+  // 静默关：按钮禁用，点击/拖拽都不能标记
+  drawnTexts.length = 0;
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s === '禁标记'; })) throw new Error('静默关未显示禁标记按钮');
+  const before = g.cells[0].state;
+  g.markMode = true;
+  g.onCellTap(0);
+  if (g.cells[0].state !== before) throw new Error('静默关点击不应改变标记');
+  g.markMode = false;
+  g.markMode = true;
+  dragCells([0, 1, 2]);
+  g.markMode = false;
+  if (g.cells[0].state !== before) throw new Error('静默关拖拽不应改变标记');
+
+  g.loadLevel(56);
+  if (g.hearts.length !== 1 || !g.levelConfigCur.noMark || g.levelConfigCur.stoneCount !== 0) {
+    throw new Error('第56关应为1爱心+禁标记+无石像');
+  }
+  g.dialog = null;
+});
+
+check('57-60关石像障碍：不可移除、封锁对角线、清除保留、放满全盘可通关', function () {
+  const puzzleLib = require(path.join(__dirname, '..', 'utils', 'puzzle.js'));
+  const rulesLib = require(path.join(__dirname, '..', 'utils', 'rules.js'));
+
+  [57, 58, 59, 60].forEach(function (lv) {
+    g.loadLevel(lv, 4242);
+    g.dialog = null;
+    const expectStones = lv >= 59 ? 3 : 2;
+    const stoneCells = g.cells.filter(function (c) { return c.state === 'stone'; });
+    if (stoneCells.length !== expectStones) throw new Error('第' + lv + '关石像数错误: ' + stoneCells.length);
+    if (g.catsPlaced !== 0) throw new Error('第' + lv + '关石像不应计入已放数');
+    if (g.hearts.length !== 1) throw new Error('第' + lv + '关应1爱心');
+    if (!g.levelConfigCur.noMark) throw new Error('第' + lv + '关应禁标记');
+
+    // 石像格不能点、不能标记
+    const sidx = stoneCells[0].idx;
+    g.onCellTap(sidx);
+    if (g.cells[sidx].state !== 'stone') throw new Error('石像格不应被点掉');
+    g.markMode = true;
+    g.toggleBan(sidx);
+    g.markMode = false;
+    if (g.cells[sidx].state !== 'stone') throw new Error('石像格不应被标记');
+
+    // 石像对角线封锁：与石像同对角线的空格落子应判冲突扣爱心
+    const s = stoneCells[0];
+    let diagTarget = null;
+    for (let dr = 1; dr < g.size && !diagTarget; dr++) {
+      for (let sign = -1; sign <= 1; sign += 2) {
+        const dc = sign * dr;
+        const row = s.row + dr, col = s.col + dc;
+        if (row < 0 || row >= g.size || col < 0 || col >= g.size) continue;
+        const cell = g.cells[row * g.size + col];
+        if (cell.state !== 'empty') continue;
+        if (rulesLib.conflictReason([], { row: cell.row, col: cell.col, region: cell.region },
+          { diagonal: true, stones: g.stones }) === rulesLib.REASON_STONE_DIAG) { diagTarget = cell; break; }
+      }
+    }
+    if (!diagTarget) throw new Error('第' + lv + '关未找到石像对角线封锁格');
+    const heartsBefore = g.hearts.filter(function (v) { return v; }).length;
+    g.onCellTap(diagTarget.idx);
+    if (g.hearts.filter(function (v) { return v; }).length !== heartsBefore - 1) {
+      throw new Error('第' + lv + '关石像对角线落子应扣爱心');
+    }
+
+    // 清除保留石像，计数归零
+    g.loadLevel(lv, 4242);
+    g.dialog = null;
+    g.undosLeft = 1;
+    const emptyBefore = g.cells.filter(function (c) { return c.state === 'empty'; })[0];
+    g.onCellTap(emptyBefore.idx);
+    g.onClear();
+    const stillStones = g.cells.filter(function (c) { return c.state === 'stone'; }).length;
+    if (stillStones !== expectStones) throw new Error('第' + lv + '关清除后石像应保留');
+    if (g.catsPlaced !== 0) throw new Error('第' + lv + '关清除后计数应归零');
+
+    // 按石像障碍约束求解，放满 n 只猫通关
+    g.loadLevel(lv, 4242);
+    g.dialog = null;
+    const res = puzzleLib.countSolutions(g.size, g.region, 1, null, null,
+      { diagonal: true, stones: g.stones });
+    if (!res.count) throw new Error('第' + lv + '关石像局面无解');
+    const cols = res.solutions[0];
+    for (let r = 0; r < g.size; r++) g.onCellTap(r * g.size + cols[r]);
+    if (!g.won) throw new Error('第' + lv + '关按解放满后未通关: ' + g.catsPlaced + '/' + g.size);
+  });
+
+  // 终极关倒计时配置与UI
+  const c58 = g.levelConfig(58), c59 = g.levelConfig(59);
+  if (c59.star3 >= c58.star3 || c59.star2 >= c58.star2) throw new Error('第59关应极速限时');
+  if (c58.timeLimit !== 0 || c59.timeLimit <= 0) throw new Error('仅第59关起应有倒计时');
+  g.loadLevel(59, 4242);
+  g.dialog = null;
+  g.seconds = c59.timeLimit - 10;
+  drawnTexts.length = 0;
+  g.render();
+  const leftText = '00:10';
+  if (!drawnTexts.some(function (t) { return t.s === leftText; })) {
+    throw new Error('终极关未显示剩余倒计时: ' + drawnTexts.map(function (t) { return t.s; }).join('|'));
+  }
+  g.seconds = 0;
+  g.dialog = null;
 });
 
 g.stopTimer();

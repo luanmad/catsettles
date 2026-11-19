@@ -85,6 +85,20 @@ class Renderer {
     this.ctx.stroke();
   }
 
+  // 虚线：用于精英关标识对角线约束范围
+  dashedLine(x1, y1, x2, y2, color, width, dash) {
+    const c = this.ctx;
+    c.save();
+    if (c.setLineDash) c.setLineDash(dash || [8, 8]);
+    c.strokeStyle = color;
+    c.lineWidth = width || 2;
+    c.beginPath();
+    c.moveTo(x1, y1);
+    c.lineTo(x2, y2);
+    c.stroke();
+    c.restore();
+  }
+
   fillRect(x, y, w, h, color) {
     this.ctx.fillStyle = color;
     this.ctx.fillRect(x, y, w, h);

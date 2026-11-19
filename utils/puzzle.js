@@ -1,5 +1,6 @@
 // 「猫猫请落座」谜题引擎
 // 规则：N x N 棋盘，每行、每列、每个颜色区域各 1 只小猫，小猫不能相邻（含斜角）
+// 第40关起（options.diagonal）：额外要求任意两只猫不在同一主/副对角线上
 
 // 可复现的伪随机数（同一关生成同一谜题）
 function rng(seed) {
@@ -30,9 +31,19 @@ function range(n) {
 }
 
 // 生成一组解：每行一只猫（列不重复），相邻行猫的列距必须大于 1（八向不相邻）
-function generateCats(n, rand) {
+// options.diagonal 为 true 时，任意两只猫都不能在同一主/副对角线上（N 皇后约束）
+function generateCats(n, rand, options) {
+  const diagonal = !!(options && options.diagonal);
   const cols = new Array(n).fill(-1);
   const usedCols = new Array(n).fill(false);
+
+  function diagonalConflict(r, c) {
+    if (!diagonal) return false;
+    for (let rr = 0; rr < r; rr++) {
+      if (Math.abs(r - rr) === Math.abs(c - cols[rr])) return true;
+    }
+    return false;
+  }
 
   function backtrack(r) {
     if (r === n) return true;
@@ -41,6 +52,7 @@ function generateCats(n, rand) {
       const c = candidates[k];
       if (usedCols[c]) continue;
       if (r > 0 && Math.abs(cols[r - 1] - c) <= 1) continue;
+      if (diagonalConflict(r, c)) continue;
       cols[r] = c;
       usedCols[c] = true;
       if (backtrack(r + 1)) return true;
@@ -151,9 +163,13 @@ function isRegionConnected(region, n, regId) {
 
 // 统计解的数量（最多数到 limit 个）
 // fixed 为已放好的猫（{row,col}）；blocked 为禁止放猫的格子下标数组
+// options.diagonal 为 true 时启用对角线约束
+// options.stones 为石像障碍（{row,col}）：石像格及其主/副对角线上的格子都禁止放猫
 // 返回 { count, solutions }，solutions 中每项为"每行猫所在的列"
-function countSolutions(n, region, limit, fixed, blocked) {
+function countSolutions(n, region, limit, fixed, blocked, options) {
   const lim = limit || 2;
+  const diagonal = !!(options && options.diagonal);
+  const stones = (options && options.stones) || [];
   const cols = new Array(n).fill(-1);
   const usedCols = new Array(n).fill(false);
   const usedRegions = new Array(n).fill(false);
@@ -161,6 +177,16 @@ function countSolutions(n, region, limit, fixed, blocked) {
   const blockedSet = {};
   if (blocked) {
     for (let i = 0; i < blocked.length; i++) blockedSet[blocked[i]] = true;
+  }
+  // 石像格与其两条对角线上所有格子都不可放猫
+  for (let s = 0; s < stones.length; s++) {
+    const st = stones[s];
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (r === st.row && c === st.col) blockedSet[r * n + c] = true;
+        else if (Math.abs(r - st.row) === Math.abs(c - st.col)) blockedSet[r * n + c] = true;
+      }
+    }
   }
 
   const fixedCol = new Array(n).fill(-1);
@@ -172,7 +198,18 @@ function countSolutions(n, region, limit, fixed, blocked) {
     }
   }
 
-  // 校验并登记固定猫：落在禁放格、同列、同区域或与上一行相邻则无解
+  // 检查 (r,c) 是否与任意已放置的猫在同一对角线（主/副）
+  function diagonalConflict(r, c) {
+    if (!diagonal) return false;
+    for (let rr = 0; rr < n; rr++) {
+      if (rr === r) continue;
+      const cc = fixedCol[rr] >= 0 ? fixedCol[rr] : cols[rr];
+      if (cc >= 0 && Math.abs(rr - r) === Math.abs(cc - c)) return true;
+    }
+    return false;
+  }
+
+  // 校验并登记固定猫：落在禁放格、同列、同区域、与上一行相邻或同对角线则无解
   for (let r = 0; r < n; r++) {
     if (fixedCol[r] < 0) continue;
     const c = fixedCol[r];
@@ -183,6 +220,7 @@ function countSolutions(n, region, limit, fixed, blocked) {
     if (r > 0 && fixedCol[r - 1] >= 0 && Math.abs(fixedCol[r - 1] - c) <= 1) {
       return { count: 0, solutions: [] };
     }
+    if (diagonalConflict(r, c)) return { count: 0, solutions: [] };
     usedCols[c] = true;
     usedRegions[reg] = true;
     cols[r] = c;
@@ -201,6 +239,7 @@ function countSolutions(n, region, limit, fixed, blocked) {
       if (r > 0 && Math.abs(cols[r - 1] - c) <= 1) continue;
       // 下一行为固定猫时也要满足不相邻（含斜角）
       if (r < n - 1 && fixedCol[r + 1] >= 0 && Math.abs(fixedCol[r + 1] - c) <= 1) continue;
+      if (diagonalConflict(r, c)) continue;
       usedCols[c] = true;
       usedRegions[reg] = true;
       cols[r] = c;
@@ -217,8 +256,8 @@ function countSolutions(n, region, limit, fixed, blocked) {
 }
 
 // 根据当前局面求解，用于提示：返回一个可以安全放置的格子，找不到返回 null
-function nextHint(n, region, placedCats, blocked) {
-  const res = countSolutions(n, region, 1, placedCats, blocked);
+function nextHint(n, region, placedCats, blocked, options) {
+  const res = countSolutions(n, region, 1, placedCats, blocked, options);
   if (!res.count) return null;
   const solution = res.solutions[0];
   const used = {};
@@ -241,11 +280,11 @@ function generate(n, rand, options) {
   let fallback = null;
 
   for (let a = 0; a < maxCats; a++) {
-    const cats = generateCats(n, rand);
+    const cats = generateCats(n, rand, opts);
     if (!cats) continue;
     for (let b = 0; b < maxRegions; b++) {
       const region = generateRegions(n, cats, rand);
-      const res = countSolutions(n, region, 2);
+      const res = countSolutions(n, region, 2, null, null, opts);
       if (res.count === 1) {
         return { cats: cats, region: region, unique: true, count: 1 };
       }
@@ -257,8 +296,87 @@ function generate(n, rand, options) {
   }
 
   if (fallback) return fallback;
-  const cats = generateCats(n, rand);
+  const cats = generateCats(n, rand, opts);
   return { cats: cats, region: generateRegions(n, cats, rand), unique: false, count: 0 };
+}
+
+// 挑选石像障碍位置（纯障碍，不是猫）：
+// 石像格及其对角线禁止放猫，但玩家仍要放满 n 只猫。
+// 必须保证放置石像后谜题仍有解；优先选封锁范围大的组合让推理更难。
+function pickStoneObstacles(n, region, cats, stoneCount, rand, options) {
+  const k = Math.min(Math.floor(stoneCount || 0), n);
+  if (k <= 0) return [];
+
+  // 收集所有候选格，排除完整解中猫的位置（石像不能压住解的猫）
+  const occupied = {};
+  for (let i = 0; i < cats.length; i++) occupied[cats[i].row * n + cats[i].col] = true;
+  const candidates = [];
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (!occupied[r * n + c]) candidates.push({ row: r, col: c });
+    }
+  }
+  shuffle(candidates, rand);
+
+  const opts = options || {};
+  const withStones = Object.assign({}, opts, { stones: [] });
+  let best = null;
+
+  // 尝试多组候选，选有解且封锁范围最大的一组
+  const trials = Math.min(60, Math.max(1, Math.floor(candidates.length / k) * 3));
+  for (let t = 0; t < trials; t++) {
+    const stones = [];
+    const used = {};
+    for (let s = 0; s < k; s++) {
+      for (let i = 0; i < candidates.length; i++) {
+        const cc = candidates[(i + t * 7 + s) % candidates.length];
+        const key = cc.row + ',' + cc.col;
+        if (used[key]) continue;
+        // 石像之间不能彼此在对角线上（避免重复封锁同一片区域）
+        let ok = true;
+        for (let j = 0; j < stones.length; j++) {
+          if (Math.abs(stones[j].row - cc.row) === Math.abs(stones[j].col - cc.col)) { ok = false; break; }
+        }
+        if (!ok) continue;
+        stones.push(cc); used[key] = true;
+        break;
+      }
+    }
+    if (stones.length < k) continue;
+    withStones.stones = stones;
+    const res = countSolutions(n, region, 2, null, null, withStones);
+    if (!res.count) continue;
+    // 封锁格子数（唯一解优先）
+    let blockedCnt = 0;
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        for (let s = 0; s < stones.length; s++) {
+          if (r === stones[s].row && c === stones[s].col) { blockedCnt++; break; }
+          if (Math.abs(r - stones[s].row) === Math.abs(c - stones[s].col)) { blockedCnt++; break; }
+        }
+      }
+    }
+    const score = (res.count === 1 ? 10000 : 0) + blockedCnt;
+    if (!best || score > best.score) best = { stones: stones, score: score, count: res.count };
+  }
+  return best ? best.stones : [];
+}
+
+// 生成带石像障碍的谜题（石像为纯障碍，不计入解）
+function generateWithStones(n, rand, options, stoneCount) {
+  let gen = null;
+  let stones = [];
+  // 重试若干次，确保真正放下指定数量的石像且有解
+  for (let attempt = 0; attempt < 30; attempt++) {
+    gen = generate(n, rand, options);
+    if (!gen || !gen.cats) continue;
+    stones = pickStoneObstacles(n, gen.region, gen.cats, stoneCount, rand, options);
+    if (stones.length === Math.min(Math.floor(stoneCount || 0), n)) break;
+  }
+  if (!gen) gen = generate(n, rand, options);
+  gen.stones = stones;
+  gen.stoneCount = stones.length;
+  return gen;
 }
 
 // 区域着色：优先保证每个区域颜色唯一（玩家按颜色识别区域），调色板不够时才退化为相邻不同色
@@ -327,4 +445,6 @@ module.exports = {
   nextHint: nextHint,
   assignColors: assignColors,
   generate: generate,
+  pickStoneObstacles: pickStoneObstacles,
+  generateWithStones: generateWithStones,
 };
