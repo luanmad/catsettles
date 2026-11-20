@@ -14,7 +14,7 @@ const ELITE_LEVEL = 40; // 第40关起：对角线约束 + 精英关（0提示0�
 // 体验完把 enabled 改为 false 即关闭，恢复正式解锁规则。
 const TEMP_UNLOCK = { false: true, from: 39, to: 60 };
 // 对角线虚线辅助：仅在该关号区间显示，改 from/to 或 enabled 即可调整范围。
-const DIAG_DASH_HINT = { enabled: true, from: 40, to: 44 };
+const DIAG_DASH_HINT = { enabled: true, from: 40, to: 43 };
 // 后期玩法梯度（在 40 关起精英规则基础上累加）
 const ONE_HEART_LEVEL = 50;   // 50关起：一线生机，1颗爱心
 const NO_MARK_LEVEL = 54;     // 54关起：静默关，禁用标记
@@ -136,6 +136,9 @@ class Game {
     this.soundOn = save.sound !== false;
     sound.setEnabled(this.soundOn);
 
+    // 老存档补偿：图鉴解锁检查（历史成就不会自动回填，启动/进度加载后补跑一次）
+    this.unlockedCats = this.unlockedCats || [];
+
     // 启动页《健康游戏忠告》：每个安装首次进入显示一次，确认后写入存档不再重复
     this.showHealthNotice = !save.healthNoticed;
 
@@ -207,6 +210,9 @@ class Game {
       }
     } catch (e) {}
     this.loadLevel(startLevel, startSeed);
+    // 老存档回填：用历史成就补解锁图鉴并落盘，避免"连击/完美很高但图鉴0只"
+    const backfill = this.checkCatUnlocks();
+    if (backfill.length) this.persist();
     this.bindInput();
     this.setupShare();
     this.refreshRank();
@@ -1088,10 +1094,22 @@ class Game {
   dismissHealthNotice() {
     if (!this.showHealthNotice) return;
     this.showHealthNotice = false;
+    this.healthNoticeReplay = false;
     this.persist();
     // 忠告页停留时间不计入本关用时，重新校准计时基准
     this.timerBase = this.seconds;
     this.timerStart = Date.now();
+  }
+
+  // 重新查看《健康游戏忠告》：不计入本关用时，关闭后仍保持已确认状态
+  replayHealthNotice() {
+    this.settings = null;
+    this.overlay = null;
+    this.dialog = null;
+    this.timerBase = this.seconds;
+    this.timerStart = Date.now();
+    this.healthNoticeReplay = true;
+    this.showHealthNotice = true;
   }
 
   drawTopBar() {
@@ -1766,6 +1784,7 @@ class Game {
     this.settings = {
       items: [
         { label: '看通关演示', tap: () => this.startDemo() },
+        { label: '健康游戏忠告', tap: () => this.replayHealthNotice() },
         { label: '选择关卡', tap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } },
         { label: '本关种子：' + seedCode(this.level, this.currentSeed) + '（同题挑战）', tap: () => this.inviteFriend() },
         { label: '换一题（随机新棋盘）', tap: () => this.rerollLevel() },

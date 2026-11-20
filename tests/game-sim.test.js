@@ -119,6 +119,43 @@ check('启动页：健康游戏忠告八句文案与进入按钮', function () {
   }
   g.showHealthNotice = false;
 });
+
+check('老存档图鉴回填：历史成就补解锁猫，不再 0 只', function () {
+  storage.catwhere_save_v2 = {
+    healthNoticed: true, maxLevel: 29,
+    bestTimes: { 5: 60, 10: 90, 15: 100, 20: 120, 25: 130 },
+    bestStars: {}, bestCombo: 26, perfectClears: 29, unlockedCats: [],
+  };
+  const fresh = new Game(canvas);
+  if (fresh.unlockedCats.length < 7) throw new Error('老存档图鉴应回填已达成成就的猫，实际' + fresh.unlockedCats.length);
+  [0, 1, 2, 3, 4, 8, 9].forEach(function (id) {
+    if (fresh.unlockedCats.indexOf(id) < 0) throw new Error('应解锁猫 id=' + id);
+  });
+  if (!storage.catwhere_save_v2.unlockedCats || storage.catwhere_save_v2.unlockedCats.length < 7) {
+    throw new Error('回填结果未落盘');
+  }
+  fresh.overlay = 'gallery';
+  drawnTexts.length = 0;
+  fresh.render();
+  if (!drawnTexts.some(function (t) { return t.s.indexOf('已收集') === 0; })) throw new Error('图鉴面板未显示收集数');
+  fresh.stopTimer();
+  storage.catwhere_save_v2 = { healthNoticed: true };
+});
+
+check('设置里重看健康游戏忠告：可显示且关闭后仍保持已确认', function () {
+  g.settings = null; g.overlay = null; g.dialog = null;
+  g.openSettings();
+  const item = g.settings.items.find(function (it) { return it.label === '健康游戏忠告'; });
+  if (!item) throw new Error('设置里缺少健康游戏忠告入口');
+  item.tap();
+  if (!g.showHealthNotice) throw new Error('点击后应显示忠告页');
+  drawnTexts.length = 0;
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s === '健康游戏忠告'; })) throw new Error('未重新绘制忠告页');
+  g.dismissHealthNotice();
+  if (g.showHealthNotice) throw new Error('关闭后应回到游戏');
+  if (!storage.catwhere_save_v2.healthNoticed) throw new Error('重看后仍应保持已确认状态');
+});
 check('初始化布局与首帧渲染', function () {
   g.render();
   if (!g.layout) throw new Error('layout 未计算');
