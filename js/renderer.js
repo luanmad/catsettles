@@ -162,7 +162,8 @@ class Renderer {
   }
 
   // 猫脸：cx,cy 中心，s 尺寸，color 主色
-  cat(cx, cy, s, color) {
+  // variant 为图鉴专属外观编号（-1 或不传 = 棋盘上的普通猫）
+  cat(cx, cy, s, color, variant) {
     const c = this.ctx;
     const k = s / 2;
     c.save();
@@ -199,7 +200,97 @@ class Renderer {
     c.lineTo(k * 0.12, k * 0.02);
     c.closePath();
     c.fill();
+    if (typeof variant === 'number' && variant >= 0) this.catMark(c, k, variant, color);
     c.restore();
+  }
+
+  // 图鉴专属外观：每只猫不同的花纹/配饰，避免看起来重复
+  catMark(c, k, v, color) {
+    const disc = function (x, y, r, fill) {
+      c.fillStyle = fill; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    };
+    const poly = function (pts, fill) {
+      c.fillStyle = fill; c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
+      c.closePath(); c.fill();
+    };
+    const line = function (x1, y1, x2, y2, col, w) {
+      c.strokeStyle = col; c.lineWidth = w; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+    };
+    const star = function (cx, cy, r, fill) {
+      c.fillStyle = fill; c.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const rr = (i % 2) ? r * 0.45 : r;
+        const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a) * rr;
+        if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+      }
+      c.closePath(); c.fill();
+    };
+
+    switch (v) {
+      case 0: // 橘座：虎斑纹
+        for (let i = -1; i <= 1; i++) line(i * k * 0.3, -k * 0.66, i * k * 0.3, -k * 0.42, '#b56a2e', k * 0.1);
+        line(-k * 0.66, k * 0.12, -k * 0.42, k * 0.1, '#b56a2e', k * 0.08);
+        line(k * 0.42, k * 0.1, k * 0.66, k * 0.12, '#b56a2e', k * 0.08);
+        break;
+      case 1: // 奶糖：右耳蝴蝶结
+        poly([[k * 0.72, -k * 1.02], [k * 0.38, -k * 1.26], [k * 0.38, -k * 0.78]], '#e8558f');
+        poly([[k * 0.72, -k * 1.02], [k * 1.06, -k * 1.26], [k * 1.06, -k * 0.78]], '#e8558f');
+        disc(k * 0.72, -k * 1.02, k * 0.1, '#ffffff');
+        break;
+      case 2: // 青团：头顶小芽
+        line(0, -k * 0.78, 0, -k * 1.24, '#3f9c68', k * 0.08);
+        disc(-k * 0.2, -k * 1.26, k * 0.2, '#6fd08c');
+        disc(k * 0.2, -k * 1.26, k * 0.2, '#6fd08c');
+        break;
+      case 3: // 蓝莓：额头三颗果
+        disc(-k * 0.32, -k * 0.6, k * 0.15, '#3f5fc9');
+        disc(k * 0.32, -k * 0.6, k * 0.15, '#3f5fc9');
+        disc(0, -k * 0.86, k * 0.15, '#3f5fc9');
+        break;
+      case 4: // 葡萄：额头卷卷
+        c.strokeStyle = '#8c56b5'; c.lineWidth = k * 0.11;
+        c.beginPath(); c.arc(0, -k * 0.56, k * 0.24, 0.2, Math.PI * 1.75); c.stroke();
+        disc(-k * 0.5, k * 0.28, k * 0.1, '#8c56b5');
+        break;
+      case 5: // 抹茶：茶叶 + 胡须
+        c.save(); c.translate(0, -k * 0.98); c.rotate(-0.35);
+        c.fillStyle = '#3f8f3a'; c.beginPath(); c.ellipse(0, 0, k * 0.32, k * 0.15, 0, 0, Math.PI * 2); c.fill();
+        c.restore();
+        line(-k * 0.52, k * 0.18, -k * 0.86, k * 0.1, '#5a9c46', k * 0.05);
+        line(k * 0.52, k * 0.18, k * 0.86, k * 0.1, '#5a9c46', k * 0.05);
+        break;
+      case 6: // 珊瑚：大腮红
+        disc(-k * 0.5, k * 0.16, k * 0.2, 'rgba(255,90,90,0.7)');
+        disc(k * 0.5, k * 0.16, k * 0.2, 'rgba(255,90,90,0.7)');
+        break;
+      case 7: // 星砂：金色星星
+        star(0, -k * 0.62, k * 0.28, '#ffe27a');
+        break;
+      case 8: // 闪电：黄色闪电
+        poly([[-k * 0.12, -k * 0.92], [k * 0.22, -k * 0.92], [k * 0.02, -k * 0.6],
+          [k * 0.26, -k * 0.6], [-k * 0.24, -k * 0.2], [-k * 0.06, -k * 0.56], [-k * 0.28, -k * 0.56]], '#fff05a');
+        break;
+      case 9: // 团子：圆润双腮
+        disc(-k * 0.62, k * 0.24, k * 0.3, color);
+        disc(k * 0.62, k * 0.24, k * 0.3, color);
+        break;
+      case 10: // 夜影：月牙
+        disc(0, -k * 0.6, k * 0.24, '#f5d76e');
+        disc(k * 0.13, -k * 0.52, k * 0.22, color);
+        break;
+      case 11: // 猫王：霸气金冠 + 红宝石
+        poly([[-k * 0.58, -k * 0.86], [-k * 0.62, -k * 1.5], [-k * 0.3, -k * 1.16],
+          [0, -k * 1.62], [k * 0.3, -k * 1.16], [k * 0.62, -k * 1.5], [k * 0.58, -k * 0.86]], '#ffd23f');
+        disc(0, -k * 1.16, k * 0.11, '#e04545');
+        disc(-k * 0.45, -k * 1.36, k * 0.07, '#fff3a8');
+        disc(k * 0.45, -k * 1.36, k * 0.07, '#fff3a8');
+        break;
+      default:
+        break;
+    }
   }
 
   // 齿轮

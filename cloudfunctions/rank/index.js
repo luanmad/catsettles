@@ -71,6 +71,15 @@ exports.main = async function (event) {
       return { ok: true };
     }
 
+    // 重置进度：删除当前用户的排行榜记录（只删自己，不影响其他玩家）
+    if (action === 'clear') {
+      const res = await db.collection(COL).where({ openid: OPENID }).get();
+      for (let i = 0; i < res.data.length; i++) {
+        await db.collection(COL).doc(res.data[i]._id).remove();
+      }
+      return { ok: true, removed: res.data.length };
+    }
+
     if (action === 'top') {
       // 取候选后在内存按得分排序，兼容没有 score 字段的旧记录
       const res = await db.collection(COL).limit(1000).get();

@@ -39,6 +39,7 @@ global.wx = {
     return global.__odc;
   },
   setUserCloudStorage: function (o) { (global.__cloudReports || (global.__cloudReports = [])).push(o); if (o.success) o.success(); },
+  removeUserCloudStorage: function (o) { (global.__cloudRemoves || (global.__cloudRemoves = [])).push(o); if (o.success) o.success(); },
   shareAppMessage: function (o) { (global.__shares || (global.__shares = [])).push(o); },
   showShareMenu: function () { global.__showShareMenuCalled = true; },
   onShareAppMessage: function (cb) { global.__shareCb = cb; },
@@ -120,6 +121,104 @@ check('启动页：健康游戏忠告八句文案与进入按钮', function () {
   g.showHealthNotice = false;
 });
 
+check('猫咪图鉴：12只外观各异、猫王戴皇冠、无重复配色', function () {
+  const GameMod = require(path.join(__dirname, '..', 'js', 'game.js'));
+  // 通过图鉴渲染捕获传给 cat() 的 variant 与 color
+  const seen = [];
+  const realCat = g.r.cat;
+  g.r.cat = function (cx, cy, s, color, variant) { seen.push({ color: color, variant: variant }); };
+  g.unlockedCats = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+  g.overlay = 'gallery';
+  g.listScroll.gallery = 0;
+  drawnTexts.length = 0;
+  g.render();
+  g.r.cat = realCat;
+
+  const cats = seen.filter(function (s) { return typeof s.variant === 'number' && s.variant >= 0; });
+  if (cats.length !== 12) throw new Error('图鉴应绘制12只已解锁猫，实际' + cats.length);
+  const variants = cats.map(function (c) { return c.variant; });
+  const colors = cats.map(function (c) { return c.color; });
+  if (new Set(variants).size !== 12) throw new Error('猫外观编号有重复: ' + variants.join(','));
+  if (new Set(colors).size !== 12) throw new Error('猫配色有重复: ' + colors.join(','));
+  if (variants[11] !== 11) throw new Error('猫王应使用皇冠外观(11)，实际' + variants[11]);
+  if (!drawnTexts.some(function (t) { return t.s === '猫王'; })) throw new Error('图鉴缺少猫王');
+
+  // 未解锁的猫不应显示外观
+  g.unlockedCats = [];
+  seen.length = 0;
+  g.r.cat = function (cx, cy, s, color, variant) { seen.push({ color: color, variant: variant }); };
+  g.render();
+  g.r.cat = realCat;
+  if (seen.some(function (s) { return s.variant >= 0; })) throw new Error('未解锁的猫不应显示专属外观');
+
+  g.closeOverlay();
+  g.unlockedCats = [];
+});
+
+check('猫主题段位：关号换算、选关标识、通关晋级、排行榜展示', function () {
+  const GameMod = require(path.join(__dirname, '..', 'js', 'game.js'));
+  const ranks = GameMod.CAT_RANKS;
+  const cases = [[1, '猫崽'], [10, '猫崽'], [11, '猫奴'], [20, '猫奴'], [21, '猫友'],
+    [30, '猫友'], [31, '猫痴'], [40, '猫痴'], [41, '猫狂'], [50, '猫狂'],
+    [51, '猫王'], [58, '猫王'], [59, '猫神'], [60, '猫神']];
+  cases.forEach(function (pair) {
+    if (GameMod.catRankOf(pair[0]).name !== pair[1]) {
+      throw new Error('第' + pair[0] + '关段位应为' + pair[1] + '，实际' + GameMod.catRankOf(pair[0]).name);
+    }
+  });
+  if (ranks.length !== 7) throw new Error('应有7个段位');
+
+  // 选关面板：当前段位与每关段位首字
+  g.maxLevel = 55;
+  g.overlay = 'levels';
+  drawnTexts.length = 0;
+  g.render();
+  const joined = drawnTexts.map(function (t) { return t.s; }).join('|');
+  if (joined.indexOf('段位：猫王') < 0) throw new Error('选关面板未显示当前段位');
+  ['崽', '奴', '友', '痴', '狂', '王', '神'].forEach(function (ch) {
+    if (joined.indexOf(ch) < 0) throw new Error('选关面板缺少段位标识 ' + ch);
+  });
+  g.closeOverlay();
+  g.maxLevel = 60;
+
+  // 通关弹窗：跨段位显示晋级
+  g.loadLevel(59, 4242);
+  g.stopTimer(); g.seconds = 10; g.winStats = null;
+  g.finishLevel();
+  if (!g.winStats.rankUp || g.winStats.rank.name !== '猫神') throw new Error('第59关应触发晋级猫神');
+  drawnTexts.length = 0;
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s.indexOf('晋升 猫神') >= 0; })) throw new Error('通关弹窗未显示晋级');
+  g.loadLevel(60, 4242);
+  g.stopTimer(); g.seconds = 10; g.winStats = null;
+  g.finishLevel();
+  if (g.winStats.rankUp) throw new Error('第60关同为猫神不应晋级');
+  g.overlay = null; g.dialog = null;
+
+  // 云排行榜条目携带段位名
+  const list = g.buildRankList([{ rank: 1, nickname: 'A', maxLevel: 60, score: 100 }]);
+  if (list[0].rankName !== '猫神') throw new Error('排行榜未换算段位');
+  g.rankReady = true;
+  g.rankList = list;
+  g.overlay = 'rank';
+  drawnTexts.length = 0;
+  g.render();
+  if (!drawnTexts.some(function (t) { return t.s === '猫神'; })) throw new Error('排行榜未显示段位徽标');
+  g.closeOverlay();
+
+  // 设置菜单显示当前段位
+  g.openSettings();
+  if (!g.settings.items.some(function (it) { return it.label.indexOf('当前段位：') === 0; })) {
+    throw new Error('设置菜单缺少段位项');
+  }
+  g.settings = null;
+  g.dialog = null;
+  // 还原到初始状态，避免影响后续用例
+  g.maxLevel = 60;
+  g.loadLevel(1);
+  g.dialog = null;
+});
+
 check('老存档图鉴回填：历史成就补解锁猫，不再 0 只', function () {
   storage.catwhere_save_v2 = {
     healthNoticed: true, maxLevel: 29,
@@ -139,6 +238,60 @@ check('老存档图鉴回填：历史成就补解锁猫，不再 0 只', functio
   fresh.render();
   if (!drawnTexts.some(function (t) { return t.s.indexOf('已收集') === 0; })) throw new Error('图鉴面板未显示收集数');
   fresh.stopTimer();
+  storage.catwhere_save_v2 = { healthNoticed: true };
+});
+
+check('重置进度：清空本地成绩、云端排行榜记录与好友榜托管数据', function () {
+  const rankSvc = require(path.join(__dirname, '..', 'utils', 'rank.js'));
+  // 模拟云函数：捕获 action
+  const calls = [];
+  const origCall = wx.cloud;
+  wx.cloud = {
+    init: function () {},
+    callFunction: function (o) {
+      calls.push(o.data && o.data.action);
+      if (o.success) o.success({ result: { ok: true } });
+    },
+  };
+  // 触发 rank.js 的懒初始化缓存（cloudReady 已在别处初始化过，这里直接测服务层接口）
+  const origClear = rankSvc.clearMyScore;
+  let clearCalled = 0;
+  rankSvc.clearMyScore = function () { clearCalled++; return Promise.resolve({ ok: true }); };
+
+  // 构造"有成绩"的状态
+  g.maxLevel = 30;
+  g.totalScore = 5000;
+  g.bestScores = { 1: 5000 };
+  g.rankReady = true;
+  g.rankList = [{ rank: 1, nickname: 'me' }];
+  g.myRankText = '第1名';
+  global.__cloudRemoves = [];
+
+  g.openSettings();
+  const item = g.settings.items.find(function (it) { return it.label === '重置进度'; });
+  if (!item) throw new Error('缺少重置进度入口');
+  item.tap();
+  if (g.dialog.content.indexOf('排行榜记录') < 0) throw new Error('重置提示未说明会清空排行榜');
+  g.dialog.onConfirm();
+
+  // 本地状态清空
+  if (g.maxLevel !== 1 || g.totalScore !== 0 || g.level !== 1) throw new Error('本地进度未重置');
+  if (Object.keys(g.bestScores).length !== 0) throw new Error('本关得分未清空');
+  if (g.rankReady || g.rankList.length || g.myRankText) throw new Error('本地排行榜缓存未清空');
+  if (g.rankFixKey !== null) throw new Error('补报限流 key 未复位');
+  // 好友榜托管数据被移除
+  const removes = global.__cloudRemoves || [];
+  if (!removes.some(function (r) {
+    return r.KVDataList && r.KVDataList.some(function (kv) { return kv.key === 'cat_rank_v1'; });
+  })) throw new Error('未移除好友榜托管数据');
+  // 云端排行榜清理被调用
+  if (clearCalled !== 1) throw new Error('未调用云端排行榜清理，实际' + clearCalled);
+
+  // 还原
+  rankSvc.clearMyScore = origClear;
+  wx.cloud = origCall;
+  g.settings = null;
+  g.dialog = null;
   storage.catwhere_save_v2 = { healthNoticed: true };
 });
 

@@ -66,6 +66,7 @@ check('数据解析与排序（得分降序优先）', function () {
       mkUser('小红', 5, 300, 30, 8000),
       mkUser('小刚', 5, 250, 20, 8000), // 同分，关数相同总用时更短应排前
       mkUser('小强', 5, 250, 15, 8000), // 同分同关同总用时，单关更短排前
+      mkUser('高阶玩家', 60, 100, 10, 7000), // 高关数，段位应为猫神
       { nickname: '无数据用户', avatarUrl: '', KVDataList: [] }, // 应被过滤
     ],
   };
@@ -78,6 +79,7 @@ check('数据解析与排序（得分降序优先）', function () {
   if (!(xm >= 0 && xm < xq && xq < xg && xg < xh)) {
     throw new Error('好友榜未按得分/关数/用时排序: 小明' + xm + ' 小强' + xq + ' 小刚' + xg + ' 小红' + xh);
   }
+  if (texts.indexOf('猫神') < 0) throw new Error('好友榜未显示段位徽标「猫神」');
 });
 check('scroll 与 hide 消息无异常', function () {
   onMessageCb({ action: 'scroll', dy: -50 });

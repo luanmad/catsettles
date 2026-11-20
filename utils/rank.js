@@ -56,8 +56,16 @@ function fetchRanking() {
   });
 }
 
+// 清空当前用户的云端排行榜记录（重置进度时调用）
+function clearMyScore() {
+  return call('clear', {}).then(function (result) {
+    return result || {};
+  });
+}
+
 module.exports = {
   submitScore: submitScore,
   fetchRanking: fetchRanking,
+  clearMyScore: clearMyScore,
   isEnabled: cloudReady,
 };

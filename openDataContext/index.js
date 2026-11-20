@@ -6,6 +6,24 @@ const ctx = canvas.getContext('2d');
 
 const KEY = 'cat_rank_v1'; // 与主域上报的 key 一致
 
+// 猫主题段位（与主域 CAT_RANKS 保持一致，展示层由关号换算）
+const CAT_RANKS = [
+  { name: '猫崽', from: 1, to: 10, color: '#b7c2d6' },
+  { name: '猫奴', from: 11, to: 20, color: '#8fd6c0' },
+  { name: '猫友', from: 21, to: 30, color: '#6fd8c6' },
+  { name: '猫痴', from: 31, to: 40, color: '#7fb3f5' },
+  { name: '猫狂', from: 41, to: 50, color: '#c9a7f5' },
+  { name: '猫王', from: 51, to: 58, color: '#ffd166' },
+  { name: '猫神', from: 59, to: 60, color: '#f4756b' },
+];
+function catRankOf(level) {
+  const lv = Math.max(1, Math.floor(level || 1));
+  for (let i = 0; i < CAT_RANKS.length; i++) {
+    if (lv >= CAT_RANKS[i].from && lv <= CAT_RANKS[i].to) return CAT_RANKS[i];
+  }
+  return CAT_RANKS[CAT_RANKS.length - 1];
+}
+
 let view = { w: 0, h: 0, scale: 1 };
 let dpr = 1;
 let rows = [];
@@ -178,11 +196,18 @@ function draw() {
     }
     ctx.restore();
 
-    // 昵称（微信真实昵称）
+    // 昵称（微信真实昵称）+ 段位徽标
     fillText(r.nickname, 128, y + rowH / 2, 24, C.text, 'left');
+    const nw = ctx.measureText(r.nickname).width;
+    const rankObj = catRankOf(r.level);
+    const showRank = 128 + nw + 120 < w - 300;
+    if (showRank) {
+      const rx = 128 + nw + 8;
+      fillRoundRect(rx, y + rowH / 2 - 13, 56, 26, 13, rankObj.color);
+      fillText(rankObj.name, rx + 28, y + rowH / 2, 15, '#ffffff', 'center', 'bold');
+    }
     if (medal) {
-      const nw = ctx.measureText(r.nickname).width;
-      const lx = Math.min(128 + nw + 10, w - 300);
+      const lx = Math.min(128 + nw + 10 + (showRank ? 64 : 0), w - 300);
       fillText(medal.label, lx, y + rowH / 2, 18, medal.badge, 'left', 'bold');
     }
     // 总分 / 本关得分 / 关数，数值过长时缩小字号避免遮挡

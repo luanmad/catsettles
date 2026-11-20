@@ -12,7 +12,7 @@ const TOTAL_LEVELS = 60;
 const ELITE_LEVEL = 40; // 第40关起：对角线约束 + 精英关（0提示0撤销）
 // 临时体验开关：开启后 39-60 关可直接从选关面板进入，且不推进正式解锁进度。
 // 体验完把 enabled 改为 false 即关闭，恢复正式解锁规则。
-const TEMP_UNLOCK = { false: true, from: 39, to: 60 };
+const TEMP_UNLOCK = { enabled: true, from: 39, to: 60 };
 // 对角线虚线辅助：仅在该关号区间显示，改 from/to 或 enabled 即可调整范围。
 const DIAG_DASH_HINT = { enabled: true, from: 40, to: 43 };
 // 后期玩法梯度（在 40 关起精英规则基础上累加）
@@ -44,19 +44,38 @@ const DEMO_STEPS = [
   '全部就位！每行每列每区域各 1 只、互不相邻 → 通关！',
 ];
 
+// 猫主题段位（展示层，由关号换算，不影响谜题规则）
+const CAT_RANKS = [
+  { name: '猫崽', from: 1, to: 10, meaning: '刚上手', color: '#b7c2d6' },
+  { name: '猫奴', from: 11, to: 20, meaning: '会玩了', color: '#8fd6c0' },
+  { name: '猫友', from: 21, to: 30, meaning: '熟练', color: '#6fd8c6' },
+  { name: '猫痴', from: 31, to: 40, meaning: '10×10 精通', color: '#7fb3f5' },
+  { name: '猫狂', from: 41, to: 50, meaning: '精英关', color: '#c9a7f5' },
+  { name: '猫王', from: 51, to: 58, meaning: '终极挑战', color: '#ffd166' },
+  { name: '猫神', from: 59, to: 60, meaning: '九五至尊', color: '#f4756b' },
+];
+function catRankOf(level) {
+  const lv = Math.max(1, Math.floor(level || 1));
+  for (let i = 0; i < CAT_RANKS.length; i++) {
+    if (lv >= CAT_RANKS[i].from && lv <= CAT_RANKS[i].to) return CAT_RANKS[i];
+  }
+  return CAT_RANKS[CAT_RANKS.length - 1];
+}
+
+// variant 让每只猫有不同花纹/配饰；颜色也拉开差异，避免图鉴看起来重复
 const CAT_COLLECTION = [
-  { id: 0, name: '橘座', color: '#f5a35c', hint: '通关第 5 关', cond: { level: 5 } },
-  { id: 1, name: '奶糖', color: '#f78fb3', hint: '通关第 10 关', cond: { level: 10 } },
-  { id: 2, name: '青团', color: '#6fd8c6', hint: '通关第 15 关', cond: { level: 15 } },
-  { id: 3, name: '蓝莓', color: '#7fb3f5', hint: '通关第 20 关', cond: { level: 20 } },
-  { id: 4, name: '葡萄', color: '#c9a7f5', hint: '通关第 25 关', cond: { level: 25 } },
-  { id: 5, name: '抹茶', color: '#9fd977', hint: '通关第 30 关', cond: { level: 30 } },
-  { id: 6, name: '珊瑚', color: '#f4756b', hint: '通关第 35 关', cond: { level: 35 } },
-  { id: 7, name: '星砂', color: '#ffd166', hint: '累计 20 颗星', cond: { stars: 20 } },
-  { id: 8, name: '闪电', color: '#ff8a3d', hint: '单关达成 6 连击', cond: { combo: 6 } },
-  { id: 9, name: '团子', color: '#2e8b8b', hint: '首次完美通关', cond: { perfect: 1 } },
-  { id: 10, name: '夜影', color: '#a66a3f', hint: '通关第 45 关', cond: { level: 45 } },
-  { id: 11, name: '猫王', color: '#2f8c78', hint: '通关全部 60 关', cond: { level: 60 } },
+  { id: 0, name: '橘座', color: '#f2a03d', variant: 0, hint: '通关第 5 关', cond: { level: 5 } },
+  { id: 1, name: '奶糖', color: '#f27fa8', variant: 1, hint: '通关第 10 关', cond: { level: 10 } },
+  { id: 2, name: '青团', color: '#5fd3c4', variant: 2, hint: '通关第 15 关', cond: { level: 15 } },
+  { id: 3, name: '蓝莓', color: '#6aa5ee', variant: 3, hint: '通关第 20 关', cond: { level: 20 } },
+  { id: 4, name: '葡萄', color: '#b281e8', variant: 4, hint: '通关第 25 关', cond: { level: 25 } },
+  { id: 5, name: '抹茶', color: '#9ad14f', variant: 5, hint: '通关第 30 关', cond: { level: 30 } },
+  { id: 6, name: '珊瑚', color: '#f0625a', variant: 6, hint: '通关第 35 关', cond: { level: 35 } },
+  { id: 7, name: '星砂', color: '#f2c033', variant: 7, hint: '累计 20 颗星', cond: { stars: 20 } },
+  { id: 8, name: '闪电', color: '#ffb020', variant: 8, hint: '单关达成 6 连击', cond: { combo: 6 } },
+  { id: 9, name: '团子', color: '#2f9e9e', variant: 9, hint: '首次完美通关', cond: { perfect: 1 } },
+  { id: 10, name: '夜影', color: '#7b5a8f', variant: 10, hint: '通关第 45 关', cond: { level: 45 } },
+  { id: 11, name: '猫王', color: '#2f8c78', variant: 11, hint: '通关全部 60 关', cond: { level: 60 } },
 ];
 
 // 颜色主题（对应原 wxss）
@@ -298,6 +317,7 @@ class Game {
     };
   }
 
+  rankOf(level) { return catRankOf(level); }
   levelSize(level) { return this.levelConfig(level).size; }
   hintQuota(level) { return level >= ELITE_LEVEL ? 0 : 1; }
   undoQuota(level) { return level >= ELITE_LEVEL ? 0 : MAX_UNDOS; }
@@ -434,6 +454,7 @@ class Game {
     return (top || []).map(function (r) {
       return {
         rank: r.rank, nickname: r.nickname, maxLevel: r.maxLevel,
+        rankName: catRankOf(r.maxLevel).name,
         score: r.score || 0, lastScore: r.lastScore || 0,
         totalText: formatTime(r.total), timeText: formatTime(r.time), isMe: !!r.isMe,
       };
@@ -452,7 +473,9 @@ class Game {
       const localScore = self.totalScore || 0;
       const cloudScore = res.me ? (res.me.score || 0) : 0;
       const missingTotal = res.me && res.me.time > 0 && (!res.me.total || res.me.total <= 0);
-      const needFix = res.me && (localScore > cloudScore || missingTotal);
+      // 本地已重置（无成绩、无通关时间）时不再补报，否则会把刚清空的记录写回云端
+      const localEmpty = localScore <= 0 && self.totalTime() <= 0 && (self.maxLevel || 1) <= 1;
+      const needFix = res.me && !localEmpty && (localScore > cloudScore || missingTotal);
       const fixKey = self.level + ':' + localScore + ':' + cloudScore;
       if (needFix && self.rankFixKey !== fixKey) {
         self.rankFixKey = fixKey;
@@ -731,6 +754,8 @@ class Game {
       score: score,
       bestScore: this.bestScores[level],
       isNewScore: isNewScore,
+      rank: catRankOf(level),
+      rankUp: catRankOf(level) !== catRankOf(Math.max(1, level - 1)),
     };
     const earned = this.checkCatUnlocks();
     this.persist(Math.min(level + 1, this.maxLevel));
@@ -1137,7 +1162,7 @@ class Game {
     r.question(66, cy, 46, C.text);
     r.addHit(20, L.heartsY, 92, 60, null, { onTap: () => { this.dialog = {
       title: '玩法说明',
-      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消、撤销按钮、清除按钮都扣1次撤销次数，用完就不能取消/撤销/清除，且都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。通关得分=关卡难度+用时+连击+完美+星级-撤消/消除-生命，累计得分越高排行榜越靠前。想看完整通关过程，可在设置里点「看通关演示」。第40关起进入精英关：小猫不能在同一对角线（含主/副），且没有提示和撤销/取消/清除次数，请谨慎落子。第50关起只有1颗爱心；第54关起禁用标记；第57关起出现石像障碍（占住的格子及其对角线都不能放猫，仍要放满全盘）；第59关起3个石像加99秒倒计时，时间归零直接失败重来。',
+      content: '每一行、每一列、每个颜色区域各放一只小猫，小猫之间不能相邻（含斜角）。每关只有2颗爱心和1次提示，放错会扣爱心，爱心用完要重玩本关。单击格子放猫或移除；按住格子可高亮同色区域方便找区域，按住并划过多个格子可直接批量标记或清除 ✕，无需先点「标记」按钮。每关仅3次撤销，点格子取消、撤销按钮、清除按钮都扣1次撤销次数，用完就不能取消/撤销/清除，且都会打断连击；连续放对不出错可累计连击，完美通关可解锁猫咪图鉴。用过提示本关最高2星；第16关起按用时评1-3星。每关棋盘随机生成，可在设置里「换一题」或用种子码和朋友挑战同一棋盘。通关得分=关卡难度+用时+连击+完美+星级-撤消/消除-生命，累计得分越高排行榜越靠前。想看完整通关过程，可在设置里点「看通关演示」。第40关起进入精英关：小猫不能在同一对角线（含主/副），且没有提示和撤销/取消/清除次数，请谨慎落子。第50关起只有1颗爱心；第54关起禁用标记；第57关起出现石像障碍（占住的格子及其对角线都不能放猫，仍要放满全盘）；第59关起3个石像加99秒倒计时，时间归零直接失败重来。段位由已解锁关数换算：1-10猫崽、11-20猫奴、21-30猫友、31-40猫痴、41-50猫狂、51-58猫王、59-60猫神，仅作荣誉展示不影响规则。',
       confirm: '知道了', showCancel: false, onConfirm: null,
     }; } });
 
@@ -1443,6 +1468,10 @@ class Game {
   drawLevelsPanel() {
     const r = this.r;
     const p = this.panelFrame('选择关卡');
+    // 当前段位（按已解锁最高关换算）
+    const curRank = catRankOf(this.maxLevel);
+    r.fillRoundRect(p.px + 280, p.py + 30, 250, 44, 22, curRank.color);
+    r.text('段位：' + curRank.name + ' · ' + curRank.meaning, p.px + 405, p.py + 52, 19, '#ffffff', 'center', 'middle', 'bold');
     const cols = 8, cellW = 70, gap = 12;
     const startX = p.px + (p.pw - (cols * cellW + (cols - 1) * gap)) / 2;
     const clipTop = p.listY;
@@ -1465,7 +1494,11 @@ class Game {
       if (locked) bg = C.border;
       r.fillRoundRect(x, y, cellW, cellW, 12, bg);
       if (temp) r.strokeRoundRect(x + 2, y + 2, cellW - 4, cellW - 4, 11, C.orange, 3);
-      r.text(String(lv), x + cellW / 2, y + cellW / 2, 28, locked ? C.subText : '#ffffff', 'center', 'middle', 'bold');
+      // 段位小标识：格子上角放段位首字，颜色对应段位
+      const rank = catRankOf(lv);
+      r.fillRoundRect(x + 3, y + 3, 22, 20, 6, locked ? C.border : rank.color);
+      r.text(rank.name.charAt(1), x + 14, y + 13, 13, locked ? C.subText : '#ffffff', 'center', 'middle', 'bold');
+      r.text(String(lv), x + cellW / 2, y + cellW / 2 + 4, 26, locked ? C.subText : '#ffffff', 'center', 'middle', 'bold');
       if (done) r.text('✓', x + cellW - 18, y + 16, 18, '#ffffff', 'center', 'middle');
       const lvStars = this.bestStars && this.bestStars[lv];
       if (lvStars) r.text('★', x + 16, y + cellW - 14, 18, '#ffd166', 'center', 'middle', 'bold');
@@ -1494,7 +1527,7 @@ class Game {
       if (y + cellW < clipTop + 32 || y > clipBottom) continue;
       const unlocked = this.unlockedCats.indexOf(cat.id) >= 0;
       r.fillRoundRect(x, y, cellW, cellW, 18, unlocked ? C.lightBg : C.border);
-      r.cat(x + cellW / 2, y + 54, 68, unlocked ? cat.color : '#b6bfd2');
+      r.cat(x + cellW / 2, y + 56, 68, unlocked ? cat.color : '#b6bfd2', unlocked ? cat.variant : -1);
       r.text(unlocked ? cat.name : '???', x + cellW / 2, y + 102, 24, unlocked ? C.text : C.subText, 'center', 'middle', 'bold');
       r.text(unlocked ? cat.hint : '未解锁', x + cellW / 2, y + 130, 18, unlocked ? C.subText : '#aeb8ce', 'center', 'middle');
     }
@@ -1547,11 +1580,19 @@ class Game {
         r.text(String(item.rank), p.px + 56, y + 42, 26, C.subText, 'center', 'middle');
       }
       const nameText = item.isMe ? item.nickname + '（我）' : item.nickname;
-      r.text(nameText, p.px + 108, y + 42, 24, C.text, 'left', 'middle');
+      const nameX = p.px + 108;
+      r.text(nameText, nameX, y + 42, 24, C.text, 'left', 'middle');
+      const nameW = r.ctx.measureText(nameText).width;
+      // 段位徽标：昵称右侧小色块，宽度受限时省略
+      const rankObj = catRankOf(item.maxLevel);
+      if (nameX + nameW + 116 < colLevel - 20) {
+        const rx = nameX + nameW + 8;
+        r.fillRoundRect(rx, y + 30, 60, 26, 13, rankObj.color);
+        r.text(rankObj.name, rx + 30, y + 43, 15, '#ffffff', 'center', 'middle', 'bold');
+      }
       if (medal) {
-        const nw = r.ctx.measureText(nameText).width;
-        const lx = Math.min(p.px + 108 + nw + 10, colLevel - 30);
-        r.text(medal.label, lx, y + 42, 18, medal.badge, 'left', 'middle', 'bold');
+        const lx = Math.min(nameX + nameW + 10, colLevel - 30);
+        r.text(medal.label, lx + (nameX + nameW + 116 < colLevel - 20 ? 68 : 0), y + 42, 18, medal.badge, 'left', 'middle', 'bold');
       }
       r.text(String(item.maxLevel), colLevel, y + 42, 24, C.subText, 'center', 'middle');
       const totalStr = String(item.score || 0), lastStr = String(item.lastScore || 0);
@@ -1636,7 +1677,7 @@ class Game {
     const showStars = !!ws.starEnabled;
     const showCombo = (ws.combo || 0) >= 2;
     const showScore = typeof ws.score === 'number';
-    const ch = 790 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0)
+    const ch = 850 + (this.allCleared ? 0 : 16) + (hasNew ? 52 : 0)
       + (showStars ? 62 : 0) + (showCombo ? 54 : 0) + (showScore ? 116 : 0);
     const y = Math.max(20, (r.DH - ch) / 2);
     const x = (r.DW - cw) / 2;
@@ -1645,10 +1686,16 @@ class Game {
     r.text('第' + this.level + '关通过！', r.DW / 2, y + 180, 40, C.text, 'center', 'middle', 'bold');
     r.text(this.allCleared ? '全部 60 关通关！你就是最强大的铲屎官' : '喵呜～小猫们都找对位置啦',
       r.DW / 2, y + 222, 22, C.subText, 'center', 'middle');
-    const scoreShift = showScore ? 116 : 0;
+    // 段位横幅：晋级时高亮显示"晋升 XX 段位"
+    const rank = ws.rank || catRankOf(this.level);
+    const rankUp = !!ws.rankUp;
+    const rankText = rankUp ? ('★ 晋升 ' + rank.name + ' 段位 ★') : ('当前段位：' + rank.name);
+    r.fillRoundRect(x + 90, y + 246, cw - 180, 52, 26, rank.color);
+    r.text(rankText + ' · ' + rank.meaning, r.DW / 2, y + 272, rankUp ? 24 : 21, '#ffffff', 'center', 'middle', 'bold');
+    const scoreShift = 60 + (showScore ? 116 : 0);
     if (showScore) {
       // 得分主视觉：金色高亮卡片 + 大号分数，标签与数值分行避免重叠
-      const scW = cw - 120, scH = 108, scY = y + 248, scX = x + 60;
+      const scW = cw - 120, scH = 108, scY = y + 308, scX = x + 60;
       r.fillRoundRect(scX, scY, scW, scH, 20, '#fff7e6');
       if (ws.isNewScore) r.strokeRoundRect(scX + 2, scY + 2, scW - 4, scH - 4, 19, C.orange, 4);
       r.text('本关得分', r.DW / 2, scY + 26, 20, C.subText, 'center', 'middle');
@@ -1660,7 +1707,7 @@ class Game {
         r.text('最高 ' + ws.bestScore, scX + scW - 16, scY + 26, 18, C.subText, 'right', 'middle');
       }
     } else if (ws.solutions) {
-      r.text('本关已发现 ' + ws.solutions + ' 种摆法', r.DW / 2, y + 252, 18, C.subText, 'center', 'middle');
+      r.text('本关已发现 ' + ws.solutions + ' 种摆法', r.DW / 2, y + 312, 18, C.subText, 'center', 'middle');
     }
     if (showStars) {
       const stars = ws.stars || 0;
@@ -1780,6 +1827,45 @@ class Game {
     }
   }
 
+  // 重置进度：清空本地成绩、云端排行榜记录、好友榜托管数据
+  resetProgress() {
+    this.maxLevel = 1;
+    this.bestTimes = {};
+    this.bestStars = {};
+    this.bestScores = {};
+    this.totalScore = 0;
+    this.bestTotal = 0;
+    this.unlockedCats = [];
+    this.levelSeeds = {};
+    this.foundSolutions = {};
+    this.bestCombo = 0;
+    this.perfectClears = 0;
+    this.eliteNoticed = false;
+    this.hardNoticed = false;
+    // 清空本地榜单缓存，避免重置后仍显示旧排名
+    this.rankReady = false;
+    this.meInfo = null;
+    this.myRankText = '';
+    this.rankList = [];
+    this.rankFixKey = null;
+    this.rankFixTried = false;
+    this.loadLevel(1);
+
+    // 好友榜托管数据（子域读取的 key），移除后好友榜不再显示自己的旧成绩
+    try {
+      if (typeof wx.removeUserCloudStorage === 'function') {
+        wx.removeUserCloudStorage({
+          KVDataList: [{ key: 'cat_rank_v1' }],
+          success: function () {}, fail: function () {},
+        });
+      }
+    } catch (e) {}
+
+    // 云端排行榜：删除当前用户记录（云函数需重新部署 clear action 才生效）
+    try { rankService.clearMyScore().then(function () {}).catch(function () {}); } catch (e) {}
+    this.showToast('进度已重置，排行榜记录已清空');
+  }
+
   openSettings() {
     this.settings = {
       items: [
@@ -1788,12 +1874,13 @@ class Game {
         { label: '选择关卡', tap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } },
         { label: '本关种子：' + seedCode(this.level, this.currentSeed) + '（同题挑战）', tap: () => this.inviteFriend() },
         { label: '换一题（随机新棋盘）', tap: () => this.rerollLevel() },
+        { label: '当前段位：' + catRankOf(this.maxLevel).name + '（' + catRankOf(this.maxLevel).meaning + '）', tap: () => { this.overlay = 'levels'; this.listScroll.levels = 0; } },
         { label: '猫咪图鉴 ' + this.unlockedCats.length + '/' + CAT_COLLECTION.length, tap: () => { this.overlay = 'gallery'; this.listScroll.gallery = 0; } },
         { label: '重玩本关', tap: () => this.loadLevel(this.level) },
         { label: '音效：' + (this.soundOn ? '开' : '关'), tap: () => { this.soundOn = !this.soundOn; sound.setEnabled(this.soundOn); if (this.soundOn) sound.play('tap'); this.persist(); } },
         { label: '重置进度', tap: () => { this.dialog = {
-          title: '重置进度', content: '确定要清空关卡进度和成绩吗？', confirm: '确定重置', showCancel: true,
-          onConfirm: () => { this.maxLevel = 1; this.bestTimes = {}; this.bestStars = {}; this.bestScores = {}; this.totalScore = 0; this.bestTotal = 0; this.unlockedCats = []; this.levelSeeds = {}; this.foundSolutions = {}; this.bestCombo = 0; this.perfectClears = 0; this.eliteNoticed = false; this.hardNoticed = false; this.loadLevel(1); },
+          title: '重置进度', content: '确定要清空关卡进度、成绩和排行榜记录吗？', confirm: '确定重置', showCancel: true,
+          onConfirm: () => this.resetProgress(),
         }; } },
         { label: '好友排行榜', tap: () => { this.overlay = 'friendRank'; this.friendRankActive = false; } },
         { label: '排行榜', tap: () => { this.overlay = 'rank'; this.refreshRank(); } },
@@ -1832,4 +1919,6 @@ class Game {
   }
 }
 
+Game.CAT_RANKS = CAT_RANKS;
+Game.catRankOf = catRankOf;
 module.exports = Game;
